@@ -1,4 +1,8 @@
-use base64::{engine::general_purpose, Engine as _};
+mod adapters;
+mod parser;
+
+use adapters::{detect_provider, normalize_role};
+use parser::image_detector::normalize_image_string;
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -727,41 +731,6 @@ fn normalize_content_part(value: &Value) -> Vec<NormalizedContent> {
     vec![NormalizedContent::Unknown { raw: value.clone() }]
 }
 
-fn normalize_role(role: &str) -> String {
-    match role {
-        "system" | "developer" | "user" | "assistant" | "tool" | "function" => role.to_string(),
-        "model" => "assistant".to_string(),
-        _ => "unknown".to_string(),
-    }
-}
-
-fn detect_provider(value: &Value) -> Option<String> {
-    if value.get("choices").is_some()
-        || value.get("output").is_some()
-        || value.get("output_text").is_some()
-    {
-        return Some("openai".to_string());
-    }
-    if value.get("candidates").is_some() || value.get("contents").is_some() {
-        return Some("gemini".to_string());
-    }
-    if value.get("message").is_some() && value.get("done").is_some() {
-        return Some("ollama".to_string());
-    }
-    if value
-        .get("content")
-        .and_then(Value::as_array)
-        .is_some_and(|items| {
-            items
-                .iter()
-                .any(|item| item.get("type").and_then(Value::as_str) == Some("text"))
-        })
-    {
-        return Some("anthropic".to_string());
-    }
-    None
-}
-
 fn detect_status(value: &Value) -> String {
     if value
         .get("error")
@@ -903,45 +872,6 @@ fn contains_image(value: &Value) -> bool {
     }
 }
 
-fn normalize_image_string(value: &str) -> Option<(Option<String>, Option<String>, Option<String>)> {
-    if value.starts_with("data:image/") && value.contains(";base64,") {
-        let mime = value
-            .split(';')
-            .next()
-            .map(|prefix| prefix.trim_start_matches("data:").to_string());
-        let base64 = value
-            .split_once(",")
-            .map(|(_, encoded)| encoded.to_string());
-        return Some((mime, Some(value.to_string()), base64));
-    }
-
-    if value.len() < 128 || value.len() > 8 * 1024 * 1024 {
-        return None;
-    }
-
-    let looks_base64 = value
-        .chars()
-        .all(|char| char.is_ascii_alphanumeric() || matches!(char, '+' | '/' | '=' | '\n' | '\r'));
-    if !looks_base64 {
-        return None;
-    }
-
-    let compact = value.replace(['\n', '\r'], "");
-    let sample_len = compact.len().min(4096);
-    let sample = &compact[..sample_len];
-    let decoded = general_purpose::STANDARD.decode(sample).ok()?;
-    let kind = infer::get(&decoded)?;
-    if !kind.mime_type().starts_with("image/") {
-        return None;
-    }
-
-    Some((
-        Some(kind.mime_type().to_string()),
-        Some(format!("data:{};base64,{}", kind.mime_type(), compact)),
-        Some(compact),
-    ))
-}
-
 pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -1015,11 +945,8 @@ mod tests {
 
     #[test]
     fn normalizes_anthropic_and_gemini_content() {
-        let anthropic = json!({
-            "model": "claude-3-7-sonnet",
-            "content": [{"type": "text", "text": "anthropic answer"}],
-            "usage": {"input_tokens": 7, "output_tokens": 8}
-        });
+        let anthropic: Value =
+            serde_json::from_str(include_str!("../fixtures/anthropic_messages.json")).unwrap();
         let normalized = normalize_call(&anthropic, &summary_from_value(&anthropic, 1, 0, None));
         assert_eq!(normalized.provider.as_deref(), Some("anthropic"));
         assert_eq!(
@@ -1029,16 +956,32 @@ mod tests {
             1
         );
 
-        let gemini = json!({
-            "candidates": [{"content": {"role": "model", "parts": [{"text": "gemini answer"}]}}],
-            "usageMetadata": {"promptTokenCount": 2, "candidatesTokenCount": 3, "totalTokenCount": 5}
-        });
+        let gemini: Value =
+            serde_json::from_str(include_str!("../fixtures/gemini_candidate.json")).unwrap();
         let normalized = normalize_call(&gemini, &summary_from_value(&gemini, 1, 0, None));
         assert_eq!(normalized.provider.as_deref(), Some("gemini"));
         assert_eq!(
             normalized.response.unwrap().messages.unwrap()[0].role,
             "assistant"
         );
+    }
+
+    #[test]
+    fn normalizes_provider_fixtures() {
+        for (fixture, provider) in [
+            (include_str!("../fixtures/openai_chat.json"), "openai"),
+            (
+                include_str!("../fixtures/anthropic_messages.json"),
+                "anthropic",
+            ),
+            (include_str!("../fixtures/gemini_candidate.json"), "gemini"),
+            (include_str!("../fixtures/ollama_chat.json"), "ollama"),
+        ] {
+            let value: Value = serde_json::from_str(fixture).unwrap();
+            let normalized = normalize_call(&value, &summary_from_value(&value, 1, 0, None));
+            assert_eq!(normalized.provider.as_deref(), Some(provider));
+            assert!(normalized.response.unwrap().messages.is_some());
+        }
     }
 
     #[test]

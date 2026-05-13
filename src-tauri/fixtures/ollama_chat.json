@@ -1,0 +1,5 @@
+{
+  "model": "llama3.2",
+  "message": {"role": "assistant", "content": "Ollama fixture answer."},
+  "done": true
+}

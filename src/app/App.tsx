@@ -6,6 +6,7 @@ import {
   Copy,
   FileJson,
   FolderOpen,
+  GitCompare,
   Image,
   Moon,
   Search,
@@ -30,7 +31,7 @@ import type {
 
 type Filter = "all" | "error" | "success" | "image" | "tool";
 type SortKey = "time" | "latency" | "tokens" | "model" | "status";
-type RightTab = "metadata" | "tools" | "error" | "raw" | "json" | "search";
+type RightTab = "metadata" | "diff" | "tools" | "error" | "raw" | "json" | "search";
 type Theme = "dark" | "light";
 
 const THEME_KEY = "promptlens.theme";
@@ -39,6 +40,7 @@ export function App() {
   const [file, setFile] = useState<FileScanResult | null>(null);
   const [selected, setSelected] = useState<LogSummary | null>(null);
   const [detail, setDetail] = useState<RecordDetail | null>(null);
+  const [compareBase, setCompareBase] = useState<RecordDetail | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("time");
   const [query, setQuery] = useState("");
@@ -118,6 +120,7 @@ export function App() {
     setLoading(true);
     setSelected(null);
     setDetail(null);
+    setCompareBase(null);
     setSearchResults([]);
     try {
       const result = await scanJsonl(path);
@@ -146,6 +149,16 @@ export function App() {
     setDetail(null);
     try {
       setDetail(await readRecord(file.filePath, summary.byteOffset, summary.lineNumber));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleSetCompare(summary: LogSummary) {
+    if (!file) return;
+    try {
+      setCompareBase(await readRecord(file.filePath, summary.byteOffset, summary.lineNumber));
+      setRightTab("diff");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -257,7 +270,7 @@ export function App() {
         <aside className="list-pane">
           <FileHeader file={file} count={filtered.length} />
           {file ? (
-            <LogList items={filtered} selected={selected} onSelect={handleSelect} />
+            <LogList items={filtered} selected={selected} onSelect={handleSelect} onCompare={handleSetCompare} />
           ) : (
             <div className="empty-state">Open a JSONL audit log to inspect LLM calls locally.</div>
           )}
@@ -272,6 +285,7 @@ export function App() {
             tab={rightTab}
             setTab={setRightTab}
             detail={detail}
+            compareBase={compareBase}
             file={file}
             searchTerm={searchTerm}
             setSearchTerm={setSearchTerm}
@@ -279,6 +293,7 @@ export function App() {
             searchResults={searchResults}
             onSearch={handleSearch}
             onJump={jumpToResult}
+            onClearCompare={() => setCompareBase(null)}
           />
         </aside>
       </section>
@@ -314,10 +329,12 @@ function LogList({
   items,
   selected,
   onSelect,
+  onCompare,
 }: {
   items: LogSummary[];
   selected: LogSummary | null;
   onSelect: (summary: LogSummary) => void;
+  onCompare: (summary: LogSummary) => void;
 }) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
@@ -350,6 +367,17 @@ function LogList({
                 <span>{formatTokens(item.totalTokens)}</span>
                 {item.hasImage ? <Image size={14} /> : null}
                 {item.hasToolCall ? <Wrench size={14} /> : null}
+                <span className="row-spacer" />
+                <span
+                  className="row-compare"
+                  title="Use as diff baseline"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onCompare(item);
+                  }}
+                >
+                  <GitCompare size={13} />
+                </span>
               </div>
               <div className="preview">{item.preview || item.parseError || "No preview"}</div>
             </button>
@@ -483,6 +511,7 @@ function RightPanel({
   tab,
   setTab,
   detail,
+  compareBase,
   file,
   searchTerm,
   setSearchTerm,
@@ -490,10 +519,12 @@ function RightPanel({
   searchResults,
   onSearch,
   onJump,
+  onClearCompare,
 }: {
   tab: RightTab;
   setTab: (tab: RightTab) => void;
   detail: RecordDetail | null;
+  compareBase: RecordDetail | null;
   file: FileScanResult | null;
   searchTerm: string;
   setSearchTerm: (term: string) => void;
@@ -501,12 +532,16 @@ function RightPanel({
   searchResults: SearchResult[];
   onSearch: () => void;
   onJump: (result: SearchResult) => void;
+  onClearCompare: () => void;
 }) {
   return (
     <div className="right-panel">
       <div className="tabs">
         <button className={tab === "metadata" ? "active" : ""} onClick={() => setTab("metadata")}>
           Metadata
+        </button>
+        <button className={tab === "diff" ? "active" : ""} onClick={() => setTab("diff")}>
+          Diff
         </button>
         <button className={tab === "tools" ? "active" : ""} onClick={() => setTab("tools")}>
           Tools
@@ -525,6 +560,7 @@ function RightPanel({
         </button>
       </div>
       {tab === "metadata" ? <MetadataView detail={detail} file={file} /> : null}
+      {tab === "diff" ? <DiffView base={compareBase} target={detail} onClear={onClearCompare} /> : null}
       {tab === "tools" ? <ToolCallsView detail={detail} /> : null}
       {tab === "error" ? <ErrorView detail={detail} /> : null}
       {tab === "raw" ? <RawPayloadView detail={detail} /> : null}
@@ -539,6 +575,80 @@ function RightPanel({
           onJump={onJump}
         />
       ) : null}
+    </div>
+  );
+}
+
+function DiffView({
+  base,
+  target,
+  onClear,
+}: {
+  base: RecordDetail | null;
+  target: RecordDetail | null;
+  onClear: () => void;
+}) {
+  if (!target) return <div className="empty-state">Select a target record to compare.</div>;
+  if (!base) {
+    return (
+      <div className="empty-state">
+        Use the compare icon in the call list to set a baseline, then select another record.
+      </div>
+    );
+  }
+
+  const baseText = extractComparableText(base);
+  const targetText = extractComparableText(target);
+  const diffRows = buildTextDiff(baseText.response || baseText.request, targetText.response || targetText.request);
+
+  return (
+    <div className="debug-view">
+      <div className="panel-actions wrap">
+        <button onClick={() => copyJson({ base: base.summary, target: target.summary })}>
+          <Copy size={14} />
+          Copy summary diff
+        </button>
+        <button onClick={onClear}>Clear baseline</button>
+      </div>
+      <h3>Records</h3>
+      <div className="diff-metrics">
+        <DiffMetric label="Base line" before={base.summary.lineNumber} after={target.summary.lineNumber} />
+        <DiffMetric label="Model" before={base.summary.model ?? "-"} after={target.summary.model ?? "-"} />
+        <DiffMetric label="Status" before={base.summary.status} after={target.summary.status} />
+        <DiffMetric label="Latency" before={formatLatency(base.summary.latencyMs)} after={formatLatency(target.summary.latencyMs)} />
+        <DiffMetric label="Total tokens" before={base.summary.totalTokens ?? "-"} after={target.summary.totalTokens ?? "-"} />
+      </div>
+      <h3>Request</h3>
+      <SideBySide before={baseText.request} after={targetText.request} />
+      <h3>Response Diff</h3>
+      <div className="text-diff">
+        {diffRows.map((row, index) => (
+          <div key={index} className={`diff-line ${row.kind}`}>
+            <span>{row.kind === "same" ? " " : row.kind === "added" ? "+" : "-"}</span>
+            <code>{row.text || " "}</code>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DiffMetric({ label, before, after }: { label: string; before: unknown; after: unknown }) {
+  const changed = String(before) !== String(after);
+  return (
+    <div className={changed ? "diff-metric changed" : "diff-metric"}>
+      <span>{label}</span>
+      <strong>{String(before)}</strong>
+      <strong>{String(after)}</strong>
+    </div>
+  );
+}
+
+function SideBySide({ before, after }: { before: string; after: string }) {
+  return (
+    <div className="side-by-side">
+      <pre>{before || "No request text found."}</pre>
+      <pre>{after || "No request text found."}</pre>
     </div>
   );
 }
@@ -716,6 +826,50 @@ function JsonNode({ name, value, path, query }: { name: string; value: unknown; 
 
 function collectContent(messages: NormalizedMessage[] | undefined, type: "tool_call" | "tool_result") {
   return (messages ?? []).flatMap((message) => message.content.filter((content) => content.type === type));
+}
+
+function extractComparableText(detail: RecordDetail) {
+  const request = flattenMessages(detail.normalized?.request?.messages);
+  const response =
+    detail.normalized?.response?.text ||
+    flattenMessages(detail.normalized?.response?.messages) ||
+    safeJson(detail.normalized?.response?.raw ?? "");
+  return { request, response };
+}
+
+function flattenMessages(messages: NormalizedMessage[] | undefined) {
+  return (messages ?? [])
+    .map((message) => {
+      const text = message.content
+        .map((content) => {
+          if (content.type === "text") return content.text;
+          if (content.type === "tool_call") return safeJson({ toolCall: content });
+          if (content.type === "tool_result") return safeJson({ toolResult: content });
+          if (content.type === "image") return `[image ${content.mime ?? ""}]`;
+          return safeJson(content);
+        })
+        .join("\n");
+      return `${message.role}: ${text}`;
+    })
+    .join("\n\n");
+}
+
+function buildTextDiff(before: string, after: string) {
+  const beforeLines = before.split(/\r?\n/);
+  const afterLines = after.split(/\r?\n/);
+  const max = Math.max(beforeLines.length, afterLines.length);
+  const rows: Array<{ kind: "same" | "added" | "removed"; text: string }> = [];
+  for (let index = 0; index < max; index += 1) {
+    const oldLine = beforeLines[index];
+    const newLine = afterLines[index];
+    if (oldLine === newLine) {
+      rows.push({ kind: "same", text: oldLine ?? "" });
+    } else {
+      if (oldLine !== undefined) rows.push({ kind: "removed", text: oldLine });
+      if (newLine !== undefined) rows.push({ kind: "added", text: newLine });
+    }
+  }
+  return rows.slice(0, 400);
 }
 
 function jsonNodeMatches(name: string, value: unknown, query: string): boolean {

@@ -21,8 +21,10 @@
 - 搜索结果上限保护
 - Tool / Error / Raw 专用调试面板
 - JSON Tree key/value 过滤和 JSON path 复制
+- 两条记录 diff 基线流程
+- provider fixtures：OpenAI、Anthropic、Gemini、Ollama
 
-当前阶段结论：v0.1 已可作为内部试用版；稳定化已完成一部分，但后端/前端仍需要进一步模块化，性能还需要真实 100MB 文件验收。
+当前阶段结论：v0.2 Debugger Foundation 已基本具备内部试用价值；后续应转入真实大文件性能验收、扫描进度/取消和打包发布验证。
 
 ## 2. 主要问题分析
 

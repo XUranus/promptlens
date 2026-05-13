@@ -1,0 +1,7 @@
+{
+  "model": "claude-3-7-sonnet",
+  "content": [
+    {"type": "text", "text": "Anthropic fixture answer."}
+  ],
+  "usage": {"input_tokens": 7, "output_tokens": 8}
+}

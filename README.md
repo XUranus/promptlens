@@ -4,7 +4,7 @@ PromptLens is a local-first desktop viewer for JSONL LLM audit logs. It focuses 
 
 ## Current Status
 
-Implemented v0.1 MVP surface:
+Implemented v0.2 debugger foundation:
 
 - Tauri + Rust + React + TypeScript desktop app
 - Local JSONL file opening
@@ -21,6 +21,9 @@ Implemented v0.1 MVP surface:
 - Full-file streaming string search
 - List filtering, threshold filters, and sorting
 - Recent files, theme toggle, and basic shortcuts
+- Two-record diff baseline flow
+- Tool, Error, and Raw payload debugger panels
+- Provider fixtures and Rust tests for OpenAI, Anthropic, Gemini, and Ollama-style payloads
 
 ## Development
 
@@ -91,6 +94,13 @@ The search command caps results at 1,000 matches so broad searches do not overlo
 - `Ctrl/Cmd + Shift + C`: copy current record JSON
 - `Arrow Up / Arrow Down`: move selected record
 - `Esc`: close image preview
+
+## Diff Flow
+
+1. Open a JSONL file.
+2. Click the compare icon on a list row to set the baseline.
+3. Select another row.
+4. Open the `Diff` tab in the right panel.
 
 ## Privacy
 

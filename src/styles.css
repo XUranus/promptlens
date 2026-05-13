@@ -259,6 +259,20 @@ select {
   font-size: 12px;
 }
 
+.row-spacer {
+  flex: 1;
+}
+
+.row-compare {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
 .preview {
   overflow: hidden;
   margin-top: 5px;
@@ -460,7 +474,7 @@ select {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   position: sticky;
   top: 0;
   z-index: 2;
@@ -499,6 +513,71 @@ select {
   color: var(--muted);
   font-size: 12px;
   text-transform: uppercase;
+}
+
+.diff-metrics {
+  display: grid;
+  gap: 6px;
+}
+
+.diff-metric {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.diff-metric span {
+  color: var(--muted);
+}
+
+.diff-metric strong {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.diff-metric.changed {
+  border-color: #806734;
+  background: rgb(128 103 52 / 14%);
+}
+
+.side-by-side {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.side-by-side pre,
+.text-diff {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px;
+  background: var(--code);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 6px;
+  min-height: 20px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.diff-line.added {
+  background: rgb(47 125 88 / 18%);
+}
+
+.diff-line.removed {
+  background: rgb(169 69 69 / 18%);
 }
 
 .metadata-view hr {
