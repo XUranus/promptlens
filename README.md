@@ -46,6 +46,16 @@ Run the desktop app:
 npm run tauri:dev
 ```
 
+## Use PromptLens
+
+1. Start the desktop app with `npm run tauri:dev`.
+2. Click `Open` and select a `.jsonl` file.
+3. Use the left call list to filter, sort, and select records.
+4. Read normalized request/response content in the center conversation view.
+5. Use the right panel tabs for metadata, diff, tools, errors, raw payloads, JSON Tree, and search.
+6. Use the compare icon in the list to set a diff baseline, then select another record.
+7. Use scan/search cancel buttons when working with large files.
+
 Build the frontend:
 
 ```bash
@@ -122,3 +132,7 @@ Open the generated files in the desktop app and verify scan progress, cancellati
 ## Privacy
 
 PromptLens reads local files through the Tauri desktop app. The MVP does not upload files, call remote services, collect telemetry, or send crash reports.
+
+## Release
+
+See [CHANGELOG.md](./CHANGELOG.md), [RELEASE_NOTES_v0.2.0.md](./RELEASE_NOTES_v0.2.0.md), and [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md).

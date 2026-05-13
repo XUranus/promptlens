@@ -1,11 +1,12 @@
 # PromptLens Release Checklist
 
-## v0.2 Debugger Readiness
+## v0.2.0 Debugger Readiness
 
 Before tagging a release:
 
 - Run `npm run build`
 - Run `cd src-tauri && cargo fmt --check && cargo test`
+- Run `npm run tauri -- build`
 - Run `npm run tauri:dev` and open `samples/basic.jsonl`
 - Verify list filtering, file search, JSON Tree search, image preview, and diff baseline selection
 - Generate a 100k-row sample with `node scripts/generate-large-sample.mjs 100000`
@@ -15,6 +16,8 @@ Before tagging a release:
 - Verify search progress updates and Cancel search stops with partial results
 - Confirm search stops at 1,000 matches and shows a truncation warning
 - Confirm raw request/response copy and assistant text copy work
+- Confirm `CHANGELOG.md` and release notes are updated
+- Confirm `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json` versions match
 
 ## Manual Smoke Cases
 
