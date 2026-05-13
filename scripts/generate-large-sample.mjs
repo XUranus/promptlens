@@ -3,14 +3,20 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 const targetRows = Number(process.argv[2] ?? 100_000);
+const targetMb = Number(process.argv[3] ?? 0);
 const outDir = join(process.cwd(), "samples");
-const outFile = join(outDir, `large-${targetRows}.jsonl`);
+const label = targetMb > 0 ? `${targetMb}mb` : `${targetRows}`;
+const outFile = join(outDir, `large-${label}.jsonl`);
 
 await mkdir(outDir, { recursive: true });
 
 const stream = createWriteStream(outFile, { encoding: "utf8" });
 
-for (let index = 0; index < targetRows; index += 1) {
+let bytesWritten = 0;
+let index = 0;
+const targetBytes = targetMb > 0 ? targetMb * 1024 * 1024 : 0;
+
+while (index < targetRows || (targetBytes > 0 && bytesWritten < targetBytes)) {
   const hasError = index % 37 === 0;
   const hasTool = index % 11 === 0;
   const model = index % 3 === 0 ? "gpt-4.1" : index % 3 === 1 ? "claude-3.7-sonnet" : "qwen-vl";
@@ -45,9 +51,12 @@ for (let index = 0; index < targetRows; index += 1) {
     metadata: hasTool ? { tool_calls: [{ name: "lookup_case", arguments: { id: index + 1 } }] } : {},
   };
 
-  if (!stream.write(`${JSON.stringify(record)}\n`)) {
+  const line = `${JSON.stringify(record)}\n`;
+  bytesWritten += Buffer.byteLength(line);
+  if (!stream.write(line)) {
     await new Promise((resolve) => stream.once("drain", resolve));
   }
+  index += 1;
 }
 
 await new Promise((resolve, reject) => {
@@ -55,4 +64,4 @@ await new Promise((resolve, reject) => {
   stream.on("error", reject);
 });
 
-console.log(`Wrote ${targetRows.toLocaleString()} rows to ${outFile}`);
+console.log(`Wrote ${index.toLocaleString()} rows (${(bytesWritten / 1024 / 1024).toFixed(1)} MB) to ${outFile}`);

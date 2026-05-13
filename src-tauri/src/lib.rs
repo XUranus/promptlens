@@ -7,6 +7,8 @@ use std::{
     path::Path,
 };
 
+const MAX_SEARCH_RESULTS: usize = 1000;
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct LogSummary {
@@ -55,6 +57,13 @@ struct SearchResult {
     line_number: usize,
     byte_offset: u64,
     context: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchResponse {
+    results: Vec<SearchResult>,
+    truncated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -290,10 +299,13 @@ fn read_record(
 }
 
 #[tauri::command]
-fn search_jsonl(file_path: String, query: String) -> Result<Vec<SearchResult>, String> {
+fn search_jsonl(file_path: String, query: String) -> Result<SearchResponse, String> {
     let needle = query.trim().to_lowercase();
     if needle.is_empty() {
-        return Ok(Vec::new());
+        return Ok(SearchResponse {
+            results: Vec::new(),
+            truncated: false,
+        });
     }
 
     let file = File::open(&file_path).map_err(|err| format!("Failed to open file: {err}"))?;
@@ -302,6 +314,7 @@ fn search_jsonl(file_path: String, query: String) -> Result<Vec<SearchResult>, S
     let mut line = String::new();
     let mut byte_offset = 0u64;
     let mut line_number = 0usize;
+    let mut truncated = false;
 
     loop {
         line.clear();
@@ -330,10 +343,14 @@ fn search_jsonl(file_path: String, query: String) -> Result<Vec<SearchResult>, S
                 byte_offset: current_offset,
                 context: context.trim().to_string(),
             });
+            if results.len() >= MAX_SEARCH_RESULTS {
+                truncated = true;
+                break;
+            }
         }
     }
 
-    Ok(results)
+    Ok(SearchResponse { results, truncated })
 }
 
 fn summary_from_value(
@@ -377,6 +394,7 @@ fn normalize_call(value: &Value, summary: &LogSummary) -> NormalizedCall {
     let request_raw = value.get("request").cloned();
     let response_raw = value.get("response").cloned();
     let error_raw = value.get("error").cloned().filter(|error| !error.is_null());
+    let provider = summary.provider.clone().or_else(|| detect_provider(value));
     let request_messages = request_raw
         .as_ref()
         .and_then(extract_messages)
@@ -395,7 +413,7 @@ fn normalize_call(value: &Value, summary: &LogSummary) -> NormalizedCall {
         id: summary.id.clone(),
         line_number: summary.line_number,
         timestamp: summary.timestamp.clone(),
-        provider: summary.provider.clone(),
+        provider,
         model: summary.model.clone(),
         endpoint: first_string(value, &["endpoint", "url", "path"]),
         status: if summary.status == "invalid_json" {
@@ -416,7 +434,11 @@ fn normalize_call(value: &Value, summary: &LogSummary) -> NormalizedCall {
         response: Some(NormalizedResponse {
             text: response_text,
             messages: response_messages,
-            tool_calls: find_first_key(value, &["tool_calls", "toolCalls"]).cloned(),
+            tool_calls: find_first_key(
+                value,
+                &["tool_calls", "toolCalls", "function_call", "tool_use"],
+            )
+            .cloned(),
             raw: response_raw,
         }),
         error: error_raw.as_ref().map(|error| NormalizedError {
@@ -453,6 +475,10 @@ fn extract_messages(value: &Value) -> Option<Vec<NormalizedMessage>> {
 }
 
 fn extract_response_messages(value: &Value) -> Option<Vec<NormalizedMessage>> {
+    if let Some(message) = value.get("message").and_then(normalize_message) {
+        return Some(vec![message]);
+    }
+
     if let Some(response) = value.get("response") {
         if let Some(message) = response.get("message").and_then(normalize_message) {
             return Some(vec![message]);
@@ -485,6 +511,63 @@ fn extract_response_messages(value: &Value) -> Option<Vec<NormalizedMessage>> {
         }
     }
 
+    if let Some(output) = value
+        .get("output")
+        .or_else(|| value.get("content"))
+        .and_then(Value::as_array)
+    {
+        let mut messages = Vec::new();
+        for item in output {
+            if let Some(message) = normalize_message(item) {
+                messages.push(message);
+            } else if let Some(content) = item.get("content").and_then(Value::as_array) {
+                let parts = content
+                    .iter()
+                    .flat_map(normalize_content_part)
+                    .collect::<Vec<_>>();
+                if !parts.is_empty() {
+                    messages.push(NormalizedMessage {
+                        role: item
+                            .get("role")
+                            .and_then(Value::as_str)
+                            .map(normalize_role)
+                            .unwrap_or_else(|| "assistant".to_string()),
+                        content: parts,
+                        raw: Some(item.clone()),
+                    });
+                }
+            } else {
+                let parts = normalize_content_part(item);
+                if !parts.is_empty()
+                    && !matches!(parts.as_slice(), [NormalizedContent::Unknown { .. }])
+                {
+                    messages.push(NormalizedMessage {
+                        role: item
+                            .get("role")
+                            .and_then(Value::as_str)
+                            .map(normalize_role)
+                            .unwrap_or_else(|| "assistant".to_string()),
+                        content: parts,
+                        raw: Some(item.clone()),
+                    });
+                }
+            }
+        }
+        if !messages.is_empty() {
+            return Some(messages);
+        }
+    }
+
+    if let Some(candidates) = value.get("candidates").and_then(Value::as_array) {
+        let messages = candidates
+            .iter()
+            .filter_map(|candidate| candidate.get("content").and_then(normalize_message))
+            .collect::<Vec<_>>();
+        if !messages.is_empty() {
+            return Some(messages);
+        }
+    }
+
     value
         .get("output_text")
         .or_else(|| value.get("response_text"))
@@ -505,9 +588,13 @@ fn normalize_message(value: &Value) -> Option<NormalizedMessage> {
     let role = value
         .get("role")
         .and_then(Value::as_str)
+        .or_else(|| value.get("author").and_then(Value::as_str))
         .map(normalize_role)
         .unwrap_or_else(|| "unknown".to_string());
-    let content_value = value.get("content").or_else(|| value.get("parts"));
+    let content_value = value
+        .get("content")
+        .or_else(|| value.get("parts"))
+        .or_else(|| value.get("message"));
     let mut content = Vec::new();
 
     match content_value {
@@ -517,7 +604,13 @@ fn normalize_message(value: &Value) -> Option<NormalizedMessage> {
                 content.extend(normalize_content_part(item));
             }
         }
-        Some(other) => content.push(NormalizedContent::Unknown { raw: other.clone() }),
+        Some(other) => {
+            if let Some(text) = text_preview_from_value(other) {
+                content.push(NormalizedContent::Text { text });
+            } else {
+                content.push(NormalizedContent::Unknown { raw: other.clone() });
+            }
+        }
         None => {
             if let Some(tool_calls) = value.get("tool_calls").or_else(|| value.get("toolCalls")) {
                 content.push(NormalizedContent::ToolCall {
@@ -540,6 +633,36 @@ fn normalize_message(value: &Value) -> Option<NormalizedMessage> {
 }
 
 fn normalize_content_part(value: &Value) -> Vec<NormalizedContent> {
+    if let Some(inline_data) = value.get("inline_data").or_else(|| value.get("inlineData")) {
+        if let Some(data) = inline_data.get("data").and_then(Value::as_str) {
+            let mime = inline_data
+                .get("mime_type")
+                .or_else(|| inline_data.get("mimeType"))
+                .and_then(Value::as_str)
+                .unwrap_or("image/png");
+            return vec![NormalizedContent::Image {
+                mime: Some(mime.to_string()),
+                data_url: Some(format!("data:{mime};base64,{data}")),
+                base64: Some(data.to_string()),
+            }];
+        }
+    }
+
+    if let Some(source) = value.get("source") {
+        if let Some(data) = source.get("data").and_then(Value::as_str) {
+            let mime = source
+                .get("media_type")
+                .or_else(|| source.get("mime_type"))
+                .and_then(Value::as_str)
+                .unwrap_or("image/png");
+            return vec![NormalizedContent::Image {
+                mime: Some(mime.to_string()),
+                data_url: Some(format!("data:{mime};base64,{data}")),
+                base64: Some(data.to_string()),
+            }];
+        }
+    }
+
     if let Some(text) = value
         .get("text")
         .or_else(|| value.get("content"))
@@ -556,6 +679,8 @@ fn normalize_content_part(value: &Value) -> Vec<NormalizedContent> {
         .and_then(Value::as_str)
         .or_else(|| value.get("url").and_then(Value::as_str))
         .or_else(|| value.get("data").and_then(Value::as_str))
+        .or_else(|| value.get("image").and_then(Value::as_str))
+        .or_else(|| value.get("image_base64").and_then(Value::as_str))
     {
         if let Some((mime, data_url, base64)) = normalize_image_string(url) {
             return vec![NormalizedContent::Image {
@@ -566,19 +691,26 @@ fn normalize_content_part(value: &Value) -> Vec<NormalizedContent> {
         }
     }
 
-    if value.get("type").and_then(Value::as_str) == Some("tool_call") {
+    if matches!(
+        value.get("type").and_then(Value::as_str),
+        Some("tool_call") | Some("function_call") | Some("tool_use")
+    ) {
         return vec![NormalizedContent::ToolCall {
             name: value
                 .get("name")
+                .or_else(|| value.get("id"))
                 .and_then(Value::as_str)
                 .map(str::to_string),
-            arguments: value.get("arguments").cloned(),
+            arguments: value
+                .get("arguments")
+                .or_else(|| value.get("input"))
+                .cloned(),
         }];
     }
 
     if matches!(
         value.get("type").and_then(Value::as_str),
-        Some("tool_result") | Some("function_result")
+        Some("tool_result") | Some("function_result") | Some("tool_result_delta")
     ) {
         return vec![NormalizedContent::ToolResult {
             name: value
@@ -598,8 +730,36 @@ fn normalize_content_part(value: &Value) -> Vec<NormalizedContent> {
 fn normalize_role(role: &str) -> String {
     match role {
         "system" | "developer" | "user" | "assistant" | "tool" | "function" => role.to_string(),
+        "model" => "assistant".to_string(),
         _ => "unknown".to_string(),
     }
+}
+
+fn detect_provider(value: &Value) -> Option<String> {
+    if value.get("choices").is_some()
+        || value.get("output").is_some()
+        || value.get("output_text").is_some()
+    {
+        return Some("openai".to_string());
+    }
+    if value.get("candidates").is_some() || value.get("contents").is_some() {
+        return Some("gemini".to_string());
+    }
+    if value.get("message").is_some() && value.get("done").is_some() {
+        return Some("ollama".to_string());
+    }
+    if value
+        .get("content")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| item.get("type").and_then(Value::as_str) == Some("text"))
+        })
+    {
+        return Some("anthropic".to_string());
+    }
+    None
 }
 
 fn detect_status(value: &Value) -> String {
@@ -631,6 +791,7 @@ fn find_usage(value: &Value) -> Usage {
                 "promptTokens",
                 "input_tokens",
                 "inputTokens",
+                "promptTokenCount",
             ],
         ),
         completion_tokens: first_u64(
@@ -640,9 +801,10 @@ fn find_usage(value: &Value) -> Usage {
                 "completionTokens",
                 "output_tokens",
                 "outputTokens",
+                "candidatesTokenCount",
             ],
         ),
-        total_tokens: first_u64(usage, &["total_tokens", "totalTokens"]),
+        total_tokens: first_u64(usage, &["total_tokens", "totalTokens", "totalTokenCount"]),
     }
 }
 
@@ -790,4 +952,117 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running PromptLens");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn scan_jsonl_tracks_offsets_and_invalid_lines() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "id": "call_1",
+                "timestamp": "2026-05-13T10:00:00Z",
+                "provider": "openai",
+                "model": "gpt-4.1",
+                "request": {"messages": [{"role": "user", "content": "hello"}]},
+                "response": {"message": {"role": "assistant", "content": "world"}},
+                "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+                "error": null
+            })
+        )
+        .unwrap();
+        writeln!(file, "not-json").unwrap();
+
+        let result = scan_jsonl(file.path().to_string_lossy().to_string()).unwrap();
+
+        assert_eq!(result.total_lines, 2);
+        assert_eq!(result.valid_records, 1);
+        assert_eq!(result.invalid_records, 1);
+        assert_eq!(result.summaries[0].line_number, 1);
+        assert_eq!(result.summaries[0].byte_offset, 0);
+        assert_eq!(result.summaries[0].total_tokens, Some(3));
+        assert_eq!(result.summaries[1].status, "invalid_json");
+        assert!(result.summaries[1].byte_offset > 0);
+    }
+
+    #[test]
+    fn read_record_normalizes_openai_chat_completion() {
+        let value = json!({
+            "id": "chatcmpl_1",
+            "choices": [{"message": {"role": "assistant", "content": "## Done"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            "model": "gpt-4.1"
+        });
+        let summary = summary_from_value(&value, 1, 0, None);
+        let normalized = normalize_call(&value, &summary);
+
+        assert_eq!(normalized.provider.as_deref(), Some("openai"));
+        assert_eq!(normalized.model.as_deref(), Some("gpt-4.1"));
+        assert_eq!(normalized.usage.unwrap().total_tokens, Some(15));
+        assert_eq!(
+            normalized.response.unwrap().messages.unwrap()[0].role,
+            "assistant"
+        );
+    }
+
+    #[test]
+    fn normalizes_anthropic_and_gemini_content() {
+        let anthropic = json!({
+            "model": "claude-3-7-sonnet",
+            "content": [{"type": "text", "text": "anthropic answer"}],
+            "usage": {"input_tokens": 7, "output_tokens": 8}
+        });
+        let normalized = normalize_call(&anthropic, &summary_from_value(&anthropic, 1, 0, None));
+        assert_eq!(normalized.provider.as_deref(), Some("anthropic"));
+        assert_eq!(
+            normalized.response.unwrap().messages.unwrap()[0]
+                .content
+                .len(),
+            1
+        );
+
+        let gemini = json!({
+            "candidates": [{"content": {"role": "model", "parts": [{"text": "gemini answer"}]}}],
+            "usageMetadata": {"promptTokenCount": 2, "candidatesTokenCount": 3, "totalTokenCount": 5}
+        });
+        let normalized = normalize_call(&gemini, &summary_from_value(&gemini, 1, 0, None));
+        assert_eq!(normalized.provider.as_deref(), Some("gemini"));
+        assert_eq!(
+            normalized.response.unwrap().messages.unwrap()[0].role,
+            "assistant"
+        );
+    }
+
+    #[test]
+    fn detects_data_url_images() {
+        let image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+        let value = json!({"request": {"messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": image}}]}]}});
+        let summary = summary_from_value(&value, 1, 0, None);
+        assert!(summary.has_image);
+        assert!(contains_image(&value));
+    }
+
+    #[test]
+    fn search_limits_results() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        for index in 0..(MAX_SEARCH_RESULTS + 10) {
+            writeln!(file, "{{\"line\": {index}, \"text\": \"needle\"}}").unwrap();
+        }
+
+        let response = search_jsonl(
+            file.path().to_string_lossy().to_string(),
+            "needle".to_string(),
+        )
+        .unwrap();
+        assert_eq!(response.results.len(), MAX_SEARCH_RESULTS);
+        assert!(response.truncated);
+    }
 }

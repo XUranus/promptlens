@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { FileScanResult, RecordDetail, SearchResult } from "./types";
+import type { FileScanResult, RecordDetail, SearchResponse } from "./types";
 
 export async function openFileDialog(): Promise<string | null> {
   return invoke("open_file_dialog");
@@ -17,6 +17,6 @@ export async function readRecord(
   return invoke("read_record", { filePath, byteOffset, lineNumber });
 }
 
-export async function searchJsonl(filePath: string, query: string): Promise<SearchResult[]> {
+export async function searchJsonl(filePath: string, query: string): Promise<SearchResponse> {
   return invoke("search_jsonl", { filePath, query });
 }

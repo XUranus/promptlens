@@ -63,7 +63,7 @@ export type NormalizedCall = {
   response?: {
     text?: string;
     messages?: NormalizedMessage[];
-    toolCalls?: unknown[];
+    toolCalls?: unknown;
     raw?: unknown;
   };
   error?: {
@@ -88,4 +88,9 @@ export type SearchResult = {
   lineNumber: number;
   byteOffset: number;
   context: string;
+};
+
+export type SearchResponse = {
+  results: SearchResult[];
+  truncated: boolean;
 };

@@ -76,6 +76,14 @@ Generate a custom row count:
 node scripts/generate-large-sample.mjs 100000
 ```
 
+Generate at least a target file size in MB:
+
+```bash
+node scripts/generate-large-sample.mjs 100000 100
+```
+
+The search command caps results at 1,000 matches so broad searches do not overload the UI on large files.
+
 ## Shortcuts
 
 - `Ctrl/Cmd + O`: open file

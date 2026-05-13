@@ -15,6 +15,9 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { copyJson, copyText, safeJson } from "../lib/clipboard";
+import { basename, formatBytes, formatJsonScalar, formatLatency, formatTime, formatTokens } from "../lib/format";
+import { loadRecentFiles, rememberRecentFile } from "../lib/recentFiles";
 import { openFileDialog, readRecord, scanJsonl, searchJsonl } from "../tauri";
 import type {
   FileScanResult,
@@ -27,10 +30,9 @@ import type {
 
 type Filter = "all" | "error" | "success" | "image" | "tool";
 type SortKey = "time" | "latency" | "tokens" | "model" | "status";
-type RightTab = "metadata" | "json" | "search";
+type RightTab = "metadata" | "tools" | "error" | "raw" | "json" | "search";
 type Theme = "dark" | "light";
 
-const RECENT_KEY = "promptlens.recentFiles";
 const THEME_KEY = "promptlens.theme";
 
 export function App() {
@@ -120,7 +122,7 @@ export function App() {
     try {
       const result = await scanJsonl(path);
       setFile(result);
-      rememberRecentFile(result.filePath, setRecentFiles);
+      setRecentFiles(rememberRecentFile(result.filePath));
       const first = result.summaries[0] ?? null;
       setSelected(first);
       if (first) {
@@ -154,7 +156,11 @@ export function App() {
     setSearching(true);
     setError(null);
     try {
-      setSearchResults(await searchJsonl(file.filePath, searchTerm));
+      const response = await searchJsonl(file.filePath, searchTerm);
+      setSearchResults(response.results);
+      if (response.truncated) {
+        setError("Search stopped after 1,000 matches. Refine the query to narrow results.");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -502,14 +508,26 @@ function RightPanel({
         <button className={tab === "metadata" ? "active" : ""} onClick={() => setTab("metadata")}>
           Metadata
         </button>
+        <button className={tab === "tools" ? "active" : ""} onClick={() => setTab("tools")}>
+          Tools
+        </button>
+        <button className={tab === "error" ? "active" : ""} onClick={() => setTab("error")}>
+          Error
+        </button>
+        <button className={tab === "raw" ? "active" : ""} onClick={() => setTab("raw")}>
+          Raw
+        </button>
         <button className={tab === "json" ? "active" : ""} onClick={() => setTab("json")}>
-          JSON Tree
+          JSON
         </button>
         <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")}>
           Search
         </button>
       </div>
       {tab === "metadata" ? <MetadataView detail={detail} file={file} /> : null}
+      {tab === "tools" ? <ToolCallsView detail={detail} /> : null}
+      {tab === "error" ? <ErrorView detail={detail} /> : null}
+      {tab === "raw" ? <RawPayloadView detail={detail} /> : null}
       {tab === "json" ? <JsonTreeView detail={detail} /> : null}
       {tab === "search" ? (
         <SearchPanel
@@ -521,6 +539,71 @@ function RightPanel({
           onJump={onJump}
         />
       ) : null}
+    </div>
+  );
+}
+
+function ToolCallsView({ detail }: { detail: RecordDetail | null }) {
+  if (!detail) return <div className="empty-state">Tool calls will appear here.</div>;
+  const toolCalls = detail.normalized?.response?.toolCalls ?? collectContent(detail.normalized?.request?.messages, "tool_call");
+  const toolResults = collectContent(detail.normalized?.response?.messages, "tool_result");
+  return (
+    <div className="debug-view">
+      <div className="panel-actions">
+        <button onClick={() => copyJson(toolCalls)}>
+          <Copy size={14} />
+          Copy tools
+        </button>
+      </div>
+      <h3>Tool Calls</h3>
+      <pre className="code-block">{safeJson(toolCalls ?? [])}</pre>
+      <h3>Tool Results</h3>
+      <pre className="code-block">{safeJson(toolResults)}</pre>
+    </div>
+  );
+}
+
+function ErrorView({ detail }: { detail: RecordDetail | null }) {
+  if (!detail) return <div className="empty-state">Error details will appear here.</div>;
+  const error = detail.normalized?.error ?? detail.summary.parseError;
+  return (
+    <div className="debug-view">
+      <div className="panel-actions">
+        <button onClick={() => copyJson(error)}>
+          <Copy size={14} />
+          Copy error
+        </button>
+      </div>
+      <pre className="code-block">{safeJson(error ?? "No error on this record.")}</pre>
+    </div>
+  );
+}
+
+function RawPayloadView({ detail }: { detail: RecordDetail | null }) {
+  if (!detail) return <div className="empty-state">Raw request and response will appear here.</div>;
+  const request = detail.normalized?.request?.raw;
+  const response = detail.normalized?.response?.raw;
+  const assistantText = detail.normalized?.response?.text;
+  return (
+    <div className="debug-view">
+      <div className="panel-actions wrap">
+        <button onClick={() => copyJson(request)}>
+          <Copy size={14} />
+          Copy request
+        </button>
+        <button onClick={() => copyJson(response)}>
+          <Copy size={14} />
+          Copy response
+        </button>
+        <button onClick={() => copyText(assistantText ?? "")}>
+          <Copy size={14} />
+          Copy assistant text
+        </button>
+      </div>
+      <h3>Raw Request</h3>
+      <pre className="code-block">{safeJson(request ?? "No request payload found.")}</pre>
+      <h3>Raw Response</h3>
+      <pre className="code-block">{safeJson(response ?? "No response payload found.")}</pre>
     </div>
   );
 }
@@ -564,6 +647,7 @@ function KeyValue({ label, value }: { label: string; value: unknown }) {
 }
 
 function JsonTreeView({ detail }: { detail: RecordDetail | null }) {
+  const [jsonQuery, setJsonQuery] = useState("");
   if (!detail) return <div className="empty-state">JSON Tree will appear here.</div>;
   return (
     <div className="json-tree-view">
@@ -573,16 +657,25 @@ function JsonTreeView({ detail }: { detail: RecordDetail | null }) {
           Copy record
         </button>
       </div>
-      <JsonNode name="root" value={detail.raw ?? detail.parseError} path="$" />
+      <input
+        className="json-query"
+        value={jsonQuery}
+        onChange={(event) => setJsonQuery(event.target.value)}
+        placeholder="Filter JSON key/value"
+      />
+      <JsonNode name="root" value={detail.raw ?? detail.parseError} path="$" query={jsonQuery.trim().toLowerCase()} />
     </div>
   );
 }
 
-function JsonNode({ name, value, path }: { name: string; value: unknown; path: string }) {
+function JsonNode({ name, value, path, query }: { name: string; value: unknown; path: string; query: string }) {
   const isContainer = value !== null && typeof value === "object";
   const isLongString = typeof value === "string" && value.length > 220;
   const isBase64 = typeof value === "string" && (value.startsWith("data:image/") || value.length > 1000);
+  const matchesQuery = !query || jsonNodeMatches(name, value, query);
   const [open, setOpen] = useState(!isBase64 && path.split(".").length < 3);
+
+  if (!matchesQuery) return null;
 
   if (!isContainer) {
     return (
@@ -591,6 +684,9 @@ function JsonNode({ name, value, path }: { name: string; value: unknown; path: s
         <span className="json-value">{formatJsonScalar(value, isLongString || isBase64)}</span>
         <button onClick={() => copyText(String(value ?? ""))} title="Copy value">
           <Copy size={13} />
+        </button>
+        <button onClick={() => copyText(path)} title="Copy JSON path">
+          path
         </button>
       </div>
     );
@@ -610,12 +706,25 @@ function JsonNode({ name, value, path }: { name: string; value: unknown; path: s
       {open ? (
         <div className="json-children">
           {entries.map(([key, child]) => (
-            <JsonNode key={`${path}.${key}`} name={key} value={child} path={`${path}.${key}`} />
+            <JsonNode key={`${path}.${key}`} name={key} value={child} path={`${path}.${key}`} query={query} />
           ))}
         </div>
       ) : null}
     </div>
   );
+}
+
+function collectContent(messages: NormalizedMessage[] | undefined, type: "tool_call" | "tool_result") {
+  return (messages ?? []).flatMap((message) => message.content.filter((content) => content.type === type));
+}
+
+function jsonNodeMatches(name: string, value: unknown, query: string): boolean {
+  if (name.toLowerCase().includes(query)) return true;
+  if (value === null || typeof value !== "object") {
+    return String(value).toLowerCase().includes(query);
+  }
+  if (Array.isArray(value)) return value.some((item) => jsonNodeMatches("", item, query));
+  return Object.entries(value).some(([key, child]) => jsonNodeMatches(key, child, query));
 }
 
 function SearchPanel({
@@ -668,71 +777,6 @@ function compareSummary(a: LogSummary, b: LogSummary, key: SortKey) {
   return (Date.parse(b.timestamp ?? "") || b.lineNumber) - (Date.parse(a.timestamp ?? "") || a.lineNumber);
 }
 
-function loadRecentFiles() {
-  try {
-    const raw = localStorage.getItem(RECENT_KEY);
-    return raw ? (JSON.parse(raw) as string[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function rememberRecentFile(path: string, setRecentFiles: (files: string[]) => void) {
-  const next = [path, ...loadRecentFiles().filter((item) => item !== path)].slice(0, 8);
-  localStorage.setItem(RECENT_KEY, JSON.stringify(next));
-  setRecentFiles(next);
-}
-
 function loadTheme(): Theme {
   return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
-}
-
-function basename(path: string) {
-  return path.split(/[\\/]/).pop() || path;
-}
-
-function formatTime(timestamp?: string) {
-  if (!timestamp) return "time ?";
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) return timestamp;
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
-function formatLatency(value?: number) {
-  if (value === undefined) return "latency ?";
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
-  return `${value}ms`;
-}
-
-function formatTokens(value?: number) {
-  if (value === undefined) return "tokens ?";
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}k tokens`;
-  return `${value} tokens`;
-}
-
-function formatBytes(value: number) {
-  if (value > 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
-  if (value > 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${value} B`;
-}
-
-function formatJsonScalar(value: unknown, truncate: boolean) {
-  const text = typeof value === "string" ? JSON.stringify(value) : String(value);
-  return truncate ? `${text.slice(0, 220)}... (${text.length} chars)` : text;
-}
-
-function safeJson(value: unknown) {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-async function copyJson(value: unknown) {
-  await copyText(safeJson(value));
-}
-
-async function copyText(value: string) {
-  await navigator.clipboard?.writeText(value);
 }
