@@ -1,0 +1,24 @@
+[package]
+name = "promptlens"
+version = "0.1.0"
+description = "Local-first LLM JSONL audit log viewer"
+authors = ["PromptLens"]
+license = ""
+repository = ""
+edition = "2021"
+
+[lib]
+name = "promptlens_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.1", features = [] }
+
+[dependencies]
+base64 = "0.22.1"
+infer = "0.19.0"
+rfd = "0.15.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2.9.2", features = [] }
+time = { version = "0.3.44", features = ["formatting"] }
