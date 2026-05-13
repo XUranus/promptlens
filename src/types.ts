@@ -26,6 +26,8 @@ export type FileScanResult = {
   totalLines: number;
   validRecords: number;
   invalidRecords: number;
+  durationMs: number;
+  cancelled: boolean;
   summaries: LogSummary[];
 };
 
@@ -93,4 +95,12 @@ export type SearchResult = {
 export type SearchResponse = {
   results: SearchResult[];
   truncated: boolean;
+  cancelled: boolean;
+  durationMs: number;
+};
+
+export type ProgressEvent = {
+  processedBytes: number;
+  totalBytes: number;
+  lineNumber: number;
 };

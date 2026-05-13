@@ -23,8 +23,9 @@
 - JSON Tree key/value 过滤和 JSON path 复制
 - 两条记录 diff 基线流程
 - provider fixtures：OpenAI、Anthropic、Gemini、Ollama
+- 扫描/搜索进度事件、取消操作和耗时显示
 
-当前阶段结论：v0.2 Debugger Foundation 已基本具备内部试用价值；后续应转入真实大文件性能验收、扫描进度/取消和打包发布验证。
+当前阶段结论：v0.2 Debugger Foundation 已基本具备内部试用价值；扫描/搜索进度与取消已接入，后续应重点做真实人工性能验收、打包发布验证和 UI 细节打磨。
 
 ## 2. 主要问题分析
 

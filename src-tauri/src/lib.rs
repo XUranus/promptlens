@@ -9,9 +9,26 @@ use std::{
     fs::{self, File},
     io::{BufRead, BufReader, Seek, SeekFrom},
     path::Path,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Instant,
 };
+use tauri::{AppHandle, Emitter, State};
 
 const MAX_SEARCH_RESULTS: usize = 1000;
+
+struct AppState {
+    cancel_scan: AtomicBool,
+    cancel_search: AtomicBool,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            cancel_scan: AtomicBool::new(false),
+            cancel_search: AtomicBool::new(false),
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +60,8 @@ struct FileScanResult {
     total_lines: usize,
     valid_records: usize,
     invalid_records: usize,
+    duration_ms: u128,
+    cancelled: bool,
     summaries: Vec<LogSummary>,
 }
 
@@ -68,6 +87,16 @@ struct SearchResult {
 struct SearchResponse {
     results: Vec<SearchResult>,
     truncated: bool,
+    cancelled: bool,
+    duration_ms: u128,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ProgressEvent {
+    processed_bytes: u64,
+    total_bytes: u64,
+    line_number: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -163,7 +192,26 @@ fn open_file_dialog() -> Option<String> {
 }
 
 #[tauri::command]
-fn scan_jsonl(file_path: String) -> Result<FileScanResult, String> {
+fn scan_jsonl(
+    app: AppHandle,
+    state: State<AppState>,
+    file_path: String,
+) -> Result<FileScanResult, String> {
+    state.cancel_scan.store(false, Ordering::Relaxed);
+    scan_jsonl_inner(file_path, Some(&app), Some(&state.cancel_scan))
+}
+
+#[tauri::command]
+fn cancel_scan(state: State<AppState>) {
+    state.cancel_scan.store(true, Ordering::Relaxed);
+}
+
+fn scan_jsonl_inner(
+    file_path: String,
+    app: Option<&AppHandle>,
+    cancel_flag: Option<&AtomicBool>,
+) -> Result<FileScanResult, String> {
+    let started = Instant::now();
     let path = Path::new(&file_path);
     let file = File::open(path).map_err(|err| format!("Failed to open file: {err}"))?;
     let metadata = fs::metadata(path).map_err(|err| format!("Failed to read metadata: {err}"))?;
@@ -184,8 +232,14 @@ fn scan_jsonl(file_path: String) -> Result<FileScanResult, String> {
     let mut invalid_records = 0usize;
     let mut byte_offset = 0u64;
     let mut line = String::new();
+    let mut cancelled = false;
 
     loop {
+        if cancel_flag.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            cancelled = true;
+            break;
+        }
+
         line.clear();
         let bytes_read = reader
             .read_line(&mut line)
@@ -197,6 +251,19 @@ fn scan_jsonl(file_path: String) -> Result<FileScanResult, String> {
         total_lines += 1;
         let current_offset = byte_offset;
         byte_offset += bytes_read as u64;
+
+        if total_lines == 1 || total_lines % 500 == 0 {
+            if let Some(app) = app {
+                let _ = app.emit(
+                    "scan-progress",
+                    ProgressEvent {
+                        processed_bytes: byte_offset,
+                        total_bytes: metadata.len(),
+                        line_number: total_lines,
+                    },
+                );
+            }
+        }
 
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -244,6 +311,8 @@ fn scan_jsonl(file_path: String) -> Result<FileScanResult, String> {
         total_lines,
         valid_records,
         invalid_records,
+        duration_ms: started.elapsed().as_millis(),
+        cancelled,
         summaries,
     })
 }
@@ -303,24 +372,56 @@ fn read_record(
 }
 
 #[tauri::command]
-fn search_jsonl(file_path: String, query: String) -> Result<SearchResponse, String> {
+fn search_jsonl(
+    app: AppHandle,
+    state: State<AppState>,
+    file_path: String,
+    query: String,
+) -> Result<SearchResponse, String> {
+    state.cancel_search.store(false, Ordering::Relaxed);
+    search_jsonl_inner(file_path, query, Some(&app), Some(&state.cancel_search))
+}
+
+#[tauri::command]
+fn cancel_search(state: State<AppState>) {
+    state.cancel_search.store(true, Ordering::Relaxed);
+}
+
+fn search_jsonl_inner(
+    file_path: String,
+    query: String,
+    app: Option<&AppHandle>,
+    cancel_flag: Option<&AtomicBool>,
+) -> Result<SearchResponse, String> {
+    let started = Instant::now();
     let needle = query.trim().to_lowercase();
     if needle.is_empty() {
         return Ok(SearchResponse {
             results: Vec::new(),
             truncated: false,
+            cancelled: false,
+            duration_ms: 0,
         });
     }
 
     let file = File::open(&file_path).map_err(|err| format!("Failed to open file: {err}"))?;
+    let total_bytes = fs::metadata(&file_path)
+        .map_err(|err| format!("Failed to read metadata: {err}"))?
+        .len();
     let mut reader = BufReader::new(file);
     let mut results = Vec::new();
     let mut line = String::new();
     let mut byte_offset = 0u64;
     let mut line_number = 0usize;
     let mut truncated = false;
+    let mut cancelled = false;
 
     loop {
+        if cancel_flag.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            cancelled = true;
+            break;
+        }
+
         line.clear();
         let bytes_read = reader
             .read_line(&mut line)
@@ -332,6 +433,18 @@ fn search_jsonl(file_path: String, query: String) -> Result<SearchResponse, Stri
         line_number += 1;
         let current_offset = byte_offset;
         byte_offset += bytes_read as u64;
+        if line_number == 1 || line_number % 500 == 0 {
+            if let Some(app) = app {
+                let _ = app.emit(
+                    "search-progress",
+                    ProgressEvent {
+                        processed_bytes: byte_offset,
+                        total_bytes,
+                        line_number,
+                    },
+                );
+            }
+        }
         let haystack = line.to_lowercase();
         if let Some(index) = haystack.find(&needle) {
             let prefix_chars = haystack[..index].chars().count();
@@ -354,7 +467,12 @@ fn search_jsonl(file_path: String, query: String) -> Result<SearchResponse, Stri
         }
     }
 
-    Ok(SearchResponse { results, truncated })
+    Ok(SearchResponse {
+        results,
+        truncated,
+        cancelled,
+        duration_ms: started.elapsed().as_millis(),
+    })
 }
 
 fn summary_from_value(
@@ -874,11 +992,14 @@ fn contains_image(value: &Value) -> bool {
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             open_file_dialog,
             scan_jsonl,
+            cancel_scan,
             read_record,
-            search_jsonl
+            search_jsonl,
+            cancel_search
         ])
         .run(tauri::generate_context!())
         .expect("error while running PromptLens");
@@ -911,7 +1032,8 @@ mod tests {
         .unwrap();
         writeln!(file, "not-json").unwrap();
 
-        let result = scan_jsonl(file.path().to_string_lossy().to_string()).unwrap();
+        let result =
+            scan_jsonl_inner(file.path().to_string_lossy().to_string(), None, None).unwrap();
 
         assert_eq!(result.total_lines, 2);
         assert_eq!(result.valid_records, 1);
@@ -1000,9 +1122,11 @@ mod tests {
             writeln!(file, "{{\"line\": {index}, \"text\": \"needle\"}}").unwrap();
         }
 
-        let response = search_jsonl(
+        let response = search_jsonl_inner(
             file.path().to_string_lossy().to_string(),
             "needle".to_string(),
+            None,
+            None,
         )
         .unwrap();
         assert_eq!(response.results.len(), MAX_SEARCH_RESULTS);

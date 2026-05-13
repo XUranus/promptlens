@@ -23,6 +23,7 @@ Implemented v0.2 debugger foundation:
 - Recent files, theme toggle, and basic shortcuts
 - Two-record diff baseline flow
 - Tool, Error, and Raw payload debugger panels
+- Scan/search progress, duration display, and cancellation
 - Provider fixtures and Rust tests for OpenAI, Anthropic, Gemini, and Ollama-style payloads
 
 ## Development
@@ -94,6 +95,22 @@ The search command caps results at 1,000 matches so broad searches do not overlo
 - `Ctrl/Cmd + Shift + C`: copy current record JSON
 - `Arrow Up / Arrow Down`: move selected record
 - `Esc`: close image preview
+
+## Large File Validation
+
+Generate 100,000 rows:
+
+```bash
+node scripts/generate-large-sample.mjs 100000
+```
+
+Generate at least 100 MB:
+
+```bash
+node scripts/generate-large-sample.mjs 100000 100
+```
+
+Open the generated files in the desktop app and verify scan progress, cancellation, list filtering, virtual scrolling, and search truncation behavior.
 
 ## Diff Flow
 

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { listen } from "@tauri-apps/api/event";
 import {
   ChevronDown,
   ChevronRight,
@@ -19,13 +20,14 @@ import remarkGfm from "remark-gfm";
 import { copyJson, copyText, safeJson } from "../lib/clipboard";
 import { basename, formatBytes, formatJsonScalar, formatLatency, formatTime, formatTokens } from "../lib/format";
 import { loadRecentFiles, rememberRecentFile } from "../lib/recentFiles";
-import { openFileDialog, readRecord, scanJsonl, searchJsonl } from "../tauri";
+import { cancelScan, cancelSearch, openFileDialog, readRecord, scanJsonl, searchJsonl } from "../tauri";
 import type {
   FileScanResult,
   LogSummary,
   NormalizedContent,
   NormalizedMessage,
   RecordDetail,
+  ProgressEvent,
   SearchResult,
 } from "../types";
 
@@ -53,6 +55,10 @@ export function App() {
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [scanProgress, setScanProgress] = useState<ProgressEvent | null>(null);
+  const [searchProgress, setSearchProgress] = useState<ProgressEvent | null>(null);
+  const [lastScanMs, setLastScanMs] = useState<number | null>(null);
+  const [lastSearchMs, setLastSearchMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
 
@@ -115,15 +121,27 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
+  useEffect(() => {
+    const unlistenScan = listen<ProgressEvent>("scan-progress", (event) => setScanProgress(event.payload));
+    const unlistenSearch = listen<ProgressEvent>("search-progress", (event) => setSearchProgress(event.payload));
+    return () => {
+      void unlistenScan.then((unlisten) => unlisten());
+      void unlistenSearch.then((unlisten) => unlisten());
+    };
+  }, []);
+
   async function loadFile(path: string) {
     setError(null);
     setLoading(true);
+    setScanProgress(null);
+    setLastScanMs(null);
     setSelected(null);
     setDetail(null);
     setCompareBase(null);
     setSearchResults([]);
     try {
       const result = await scanJsonl(path);
+      setLastScanMs(result.durationMs);
       setFile(result);
       setRecentFiles(rememberRecentFile(result.filePath));
       const first = result.summaries[0] ?? null;
@@ -131,10 +149,14 @@ export function App() {
       if (first) {
         setDetail(await readRecord(result.filePath, first.byteOffset, first.lineNumber));
       }
+      if (result.cancelled) {
+        setError("Scan was cancelled. Partial results are shown.");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
+      setScanProgress(null);
     }
   }
 
@@ -167,17 +189,24 @@ export function App() {
   async function handleSearch() {
     if (!file || !searchTerm.trim()) return;
     setSearching(true);
+    setSearchProgress(null);
+    setLastSearchMs(null);
     setError(null);
     try {
       const response = await searchJsonl(file.filePath, searchTerm);
       setSearchResults(response.results);
+      setLastSearchMs(response.durationMs);
       if (response.truncated) {
         setError("Search stopped after 1,000 matches. Refine the query to narrow results.");
+      }
+      if (response.cancelled) {
+        setError("Search was cancelled. Partial results are shown.");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSearching(false);
+      setSearchProgress(null);
     }
   }
 
@@ -265,6 +294,18 @@ export function App() {
       </header>
 
       {error ? <div className="error-banner">{error}</div> : null}
+      {loading || searching || lastScanMs !== null || lastSearchMs !== null ? (
+        <ProgressStrip
+          loading={loading}
+          searching={searching}
+          scanProgress={scanProgress}
+          searchProgress={searchProgress}
+          lastScanMs={lastScanMs}
+          lastSearchMs={lastSearchMs}
+          onCancelScan={() => void cancelScan()}
+          onCancelSearch={() => void cancelSearch()}
+        />
+      ) : null}
 
       <section className="workspace">
         <aside className="list-pane">
@@ -321,6 +362,49 @@ function FileHeader({ file, count }: { file: FileScanResult | null; count: numbe
         {count.toLocaleString()} shown · {file.validRecords.toLocaleString()} valid ·{" "}
         {file.invalidRecords.toLocaleString()} invalid · {formatBytes(file.fileSize)}
       </div>
+    </div>
+  );
+}
+
+function ProgressStrip({
+  loading,
+  searching,
+  scanProgress,
+  searchProgress,
+  lastScanMs,
+  lastSearchMs,
+  onCancelScan,
+  onCancelSearch,
+}: {
+  loading: boolean;
+  searching: boolean;
+  scanProgress: ProgressEvent | null;
+  searchProgress: ProgressEvent | null;
+  lastScanMs: number | null;
+  lastSearchMs: number | null;
+  onCancelScan: () => void;
+  onCancelSearch: () => void;
+}) {
+  const active = loading ? scanProgress : searching ? searchProgress : null;
+  const percent = active && active.totalBytes > 0 ? Math.min(100, (active.processedBytes / active.totalBytes) * 100) : 0;
+  const label = loading
+    ? `Scanning ${formatBytes(active?.processedBytes ?? 0)} / ${formatBytes(active?.totalBytes ?? 0)} · ${
+        active?.lineNumber ?? 0
+      } lines`
+    : searching
+      ? `Searching ${formatBytes(active?.processedBytes ?? 0)} / ${formatBytes(active?.totalBytes ?? 0)} · ${
+          active?.lineNumber ?? 0
+        } lines`
+      : `Last scan ${formatDuration(lastScanMs)} · last search ${formatDuration(lastSearchMs)}`;
+
+  return (
+    <div className="progress-strip">
+      <div className="progress-track">
+        <div style={{ width: `${loading || searching ? percent : 100}%` }} />
+      </div>
+      <span>{label}</span>
+      {loading ? <button onClick={onCancelScan}>Cancel scan</button> : null}
+      {searching ? <button onClick={onCancelSearch}>Cancel search</button> : null}
     </div>
   );
 }
@@ -933,4 +1017,10 @@ function compareSummary(a: LogSummary, b: LogSummary, key: SortKey) {
 
 function loadTheme(): Theme {
   return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+}
+
+function formatDuration(value: number | null) {
+  if (value === null) return "-";
+  if (value >= 1000) return `${(value / 1000).toFixed(2)}s`;
+  return `${value}ms`;
 }

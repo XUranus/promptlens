@@ -24,5 +24,6 @@ pnpm-debug.log*
 .env
 .env.*
 
-# Generated large samples
-samples/large-*.jsonl
+# Generated or local log samples
+samples/*.jsonl
+!samples/basic.jsonl

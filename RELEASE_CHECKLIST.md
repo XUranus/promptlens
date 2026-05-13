@@ -11,6 +11,8 @@ Before tagging a release:
 - Generate a 100k-row sample with `node scripts/generate-large-sample.mjs 100000`
 - Generate a 100MB sample with `node scripts/generate-large-sample.mjs 100000 100`
 - Open the generated large samples in the desktop app
+- Verify scan progress updates and Cancel scan stops with partial results
+- Verify search progress updates and Cancel search stops with partial results
 - Confirm search stops at 1,000 matches and shows a truncation warning
 - Confirm raw request/response copy and assistant text copy work
 
@@ -27,3 +29,5 @@ Before tagging a release:
 ## Linux Notes
 
 Tauri on Linux requires the WebKit/GTK stack installed by the host distribution. If the app compiles but fails to launch, verify WebKitGTK, GTK, and common desktop portal packages are installed.
+
+Current Linux bundle targets are `deb` and `rpm`. AppImage should be re-enabled after validating the linuxdeploy toolchain in the release environment.

@@ -57,8 +57,9 @@ select {
 
 .app-shell {
   display: grid;
-  grid-template-rows: 52px auto 1fr;
+  grid-template-rows: 52px auto auto minmax(0, 1fr);
   min-height: 100vh;
+  height: 100vh;
   background: var(--bg);
   color: var(--text);
 }
@@ -165,11 +166,45 @@ select {
   background: var(--danger);
 }
 
+.progress-strip {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
+.progress-track {
+  overflow: hidden;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.progress-track div {
+  height: 100%;
+  border-radius: inherit;
+  background: #3f6fb6;
+}
+
+.progress-strip button {
+  height: 26px;
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--surface-3);
+  cursor: pointer;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: 360px minmax(420px, 1fr) 410px;
   min-height: 0;
-  height: calc(100vh - 52px);
+  height: 100%;
 }
 
 .list-pane,
@@ -209,7 +244,7 @@ select {
 }
 
 .log-list {
-  height: calc(100vh - 116px);
+  height: calc(100% - 64px);
   overflow: auto;
 }
 

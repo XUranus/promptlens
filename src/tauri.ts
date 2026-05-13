@@ -9,6 +9,10 @@ export async function scanJsonl(filePath: string): Promise<FileScanResult> {
   return invoke("scan_jsonl", { filePath });
 }
 
+export async function cancelScan(): Promise<void> {
+  return invoke("cancel_scan");
+}
+
 export async function readRecord(
   filePath: string,
   byteOffset: number,
@@ -19,4 +23,8 @@ export async function readRecord(
 
 export async function searchJsonl(filePath: string, query: string): Promise<SearchResponse> {
   return invoke("search_jsonl", { filePath, query });
+}
+
+export async function cancelSearch(): Promise<void> {
+  return invoke("cancel_search");
 }
