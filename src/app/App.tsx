@@ -140,9 +140,9 @@ const LEFT_MIN = 260;
 const LEFT_MAX = 560;
 const LEFT_DEFAULT = 340;
 const RIGHT_MIN = 300;
-const RIGHT_MAX = 640;
+const RIGHT_MAX_RATIO = 0.6;
 const RIGHT_DEFAULT = 400;
-const CENTER_MIN = 400;
+const CENTER_MIN = 200;
 
 type WorkspaceTab = {
   id: string;
@@ -364,6 +364,14 @@ export function App() {
   }, [activeTabId, restoredWorkspace, tabs]);
 
   useEffect(() => {
+    savePanelWidth("left", leftPanelWidth);
+  }, [leftPanelWidth]);
+
+  useEffect(() => {
+    savePanelWidth("right", rightPanelWidth);
+  }, [rightPanelWidth]);
+
+  useEffect(() => {
     if (!file) {
       setFileStatus(null);
       return;
@@ -405,7 +413,7 @@ export function App() {
         const newL = Math.round(Math.min(maxL, Math.max(LEFT_MIN, startLeft + dx)));
         applyDirect(newL, startRight);
       } else {
-        const maxR = Math.min(RIGHT_MAX, available - startLeft - CENTER_MIN);
+        const maxR = Math.min(maxRightPanelWidth(available), available - startLeft - CENTER_MIN);
         const newR = Math.round(Math.min(maxR, Math.max(RIGHT_MIN, startRight - dx)));
         applyDirect(startLeft, newR);
       }
@@ -434,7 +442,7 @@ export function App() {
         const last = parts[parts.length - 1];
         const rMatch = last.match(/^(\d+)px/);
         if (rMatch) {
-          const maxR = Math.min(RIGHT_MAX, available - startLeft - CENTER_MIN);
+          const maxR = Math.min(maxRightPanelWidth(available), available - startLeft - CENTER_MIN);
           const val = Math.round(Math.min(maxR, Math.max(RIGHT_MIN, Number(rMatch[1]))));
           setRightPanelWidth(val);
           savePanelWidth("right", val);
@@ -487,6 +495,7 @@ export function App() {
       const available = el.offsetWidth - 2;
       let l = leftPanelWidth;
       let r = rightPanelWidth;
+      r = Math.min(r, maxRightPanelWidth(available));
       if (l + r + CENTER_MIN > available) {
         const deficit = l + r + CENTER_MIN - available;
         const total = l + r;
@@ -1273,8 +1282,9 @@ function MessageCard({
   message: NormalizedMessage;
   onImagePreview: (src: string) => void;
 }) {
-  const [raw, setRaw] = useState(false);
+  const [viewMode, setViewMode] = useState<"rendered" | "text" | "raw">("rendered");
   const [expanded, setExpanded] = useState(false);
+  const isRaw = viewMode === "raw";
 
   return (
     <article className={`message-card role-${message.role}`}>
@@ -1284,16 +1294,29 @@ function MessageCard({
           <button onClick={() => copyJson(message.raw ?? message.content)} title="Copy message">
             <Copy size={14} />
           </button>
-          <button onClick={() => setRaw(!raw)}>{raw ? "Rendered" : "Raw"}</button>
+          <button className={viewMode === "rendered" ? "active" : ""} onClick={() => setViewMode("rendered")}>
+            Rendered
+          </button>
+          <button className={viewMode === "text" ? "active" : ""} onClick={() => setViewMode("text")}>
+            Text
+          </button>
+          <button className={isRaw ? "active" : ""} onClick={() => setViewMode("raw")}>
+            Raw
+          </button>
           <button onClick={() => setExpanded(!expanded)}>{expanded ? "Collapse" : "Expand"}</button>
         </div>
       </div>
       <div className={`message-content ${expanded ? "expanded" : ""}`}>
-        {raw ? (
+        {isRaw ? (
           <JsonCode value={message.raw ?? message.content} />
         ) : (
           message.content.map((content, index) => (
-            <ContentBlock key={index} content={content} onImagePreview={onImagePreview} />
+            <ContentBlock
+              key={index}
+              content={content}
+              textMode={viewMode === "text"}
+              onImagePreview={onImagePreview}
+            />
           ))
         )}
       </div>
@@ -1303,12 +1326,17 @@ function MessageCard({
 
 function ContentBlock({
   content,
+  textMode,
   onImagePreview,
 }: {
   content: NormalizedContent;
+  textMode?: boolean;
   onImagePreview: (src: string) => void;
 }) {
   if (content.type === "text") {
+    if (textMode) {
+      return <pre className="plain-text-block">{content.text}</pre>;
+    }
     return (
       <div className="markdown">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.text}</ReactMarkdown>
@@ -2534,7 +2562,7 @@ function loadPanelWidth(side: "left" | "right", fallback: number): number {
     if (!raw) return fallback;
     const val = Number(raw);
     if (!Number.isFinite(val)) return fallback;
-    return side === "left" ? Math.min(LEFT_MAX, Math.max(LEFT_MIN, val)) : Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, val));
+    return side === "left" ? Math.min(LEFT_MAX, Math.max(LEFT_MIN, val)) : Math.max(RIGHT_MIN, val);
   } catch {
     return fallback;
   }
@@ -2542,4 +2570,8 @@ function loadPanelWidth(side: "left" | "right", fallback: number): number {
 
 function savePanelWidth(side: "left" | "right", value: number) {
   localStorage.setItem(`${PANEL_WIDTH_KEY}.${side}`, String(value));
+}
+
+function maxRightPanelWidth(availableWidth: number) {
+  return Math.max(RIGHT_MIN, Math.floor(availableWidth * RIGHT_MAX_RATIO));
 }

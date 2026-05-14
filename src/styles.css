@@ -187,9 +187,10 @@ select {
 .app-shell {
   position: relative;
   z-index: 1;
-  display: grid;
-  grid-template-rows: 38px 48px auto auto 1fr;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
+  min-height: 0;
   background: var(--app-bg);
   color: var(--text-primary);
   font-family: var(--app-font-family, Inter, ui-sans-serif, system-ui, sans-serif);
@@ -729,8 +730,10 @@ select:focus {
 
 .workspace {
   display: grid;
+  flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
+  height: auto;
+  width: 100%;
 }
 
 /* ============================================================
@@ -1110,6 +1113,12 @@ body.resizing * {
   border-color: var(--glass-border-strong);
 }
 
+.message-actions button.active {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-color: var(--glass-border-accent);
+}
+
 /* ============================================================
    Markdown
    ============================================================ */
@@ -1145,6 +1154,16 @@ body.resizing * {
   padding: 2px 5px;
   background: var(--code-bg);
   font-size: 12px;
+}
+
+.plain-text-block {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  color: var(--text-primary);
+  font-family: var(--app-font-family, Inter, ui-sans-serif, system-ui, sans-serif);
+  font-size: 13px;
 }
 
 .json-code {
