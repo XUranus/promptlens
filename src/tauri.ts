@@ -5,6 +5,7 @@ import type {
   FileScanResult,
   FileStatus,
   IncrementalScanResult,
+  LogSource,
   RecordDetail,
   SearchResponse,
 } from "./types";
@@ -13,8 +14,8 @@ export async function openFileDialog(): Promise<string | null> {
   return invoke("open_file_dialog");
 }
 
-export async function scanJsonl(filePath: string): Promise<FileScanResult> {
-  return invoke("scan_jsonl", { filePath });
+export async function scanJsonl(filePath: string, logSource: LogSource = "audit"): Promise<FileScanResult> {
+  return invoke("scan_jsonl", { filePath, logSource });
 }
 
 export async function scanJsonlIncremental(
@@ -62,8 +63,8 @@ export async function readRecord(
   return invoke("read_record", { filePath, byteOffset, lineNumber });
 }
 
-export async function readAgentSession(filePath: string): Promise<AgentSessionResult> {
-  return invoke("read_agent_session", { filePath });
+export async function readAgentSession(filePath: string, logSource: LogSource = "audit"): Promise<AgentSessionResult> {
+  return invoke("read_agent_session", { filePath, logSource });
 }
 
 export async function searchJsonl(filePath: string, query: string): Promise<SearchResponse> {

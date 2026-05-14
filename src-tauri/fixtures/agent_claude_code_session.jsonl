@@ -1,0 +1,6 @@
+{"type":"file-history-snapshot","messageId":"m-1","snapshot":{"messageId":"m-1","trackedFileBackups":{},"timestamp":"2026-05-01T13:36:13.565Z"},"isSnapshotUpdate":false}
+{"parentUuid":null,"type":"user","uuid":"u-1","timestamp":"2026-05-01T13:36:13.564Z","sessionId":"claude-session-1","message":{"role":"user","content":"read README.md"}}
+{"parentUuid":"u-1","type":"assistant","uuid":"a-1","timestamp":"2026-05-01T13:36:14.000Z","sessionId":"claude-session-1","message":{"id":"msg-1","type":"message","role":"assistant","content":[{"type":"thinking","thinking":"Need read the file first."}]}}
+{"parentUuid":"a-1","type":"assistant","uuid":"a-2","timestamp":"2026-05-01T13:36:15.000Z","sessionId":"claude-session-1","message":{"id":"msg-2","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu-1","name":"Read","input":{"file_path":"README.md"}}]}}
+{"parentUuid":"a-2","type":"user","uuid":"u-2","timestamp":"2026-05-01T13:36:16.000Z","sessionId":"claude-session-1","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu-1","content":"# Project"}]}}
+{"parentUuid":"u-2","type":"assistant","uuid":"a-3","timestamp":"2026-05-01T13:36:17.000Z","sessionId":"claude-session-1","message":{"id":"msg-3","type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu-2","name":"Bash","input":{"command":"npm test"}}]}}

@@ -1,7 +1,11 @@
 mod adapters;
+mod agent_adapters;
 mod parser;
 
 use adapters::{detect_provider, normalize_role};
+use agent_adapters::{
+    adapt_agent_event, file_event_type_from_tool, is_file_tool, is_shell_tool, LogSource,
+};
 use parser::image_detector::normalize_image_string;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -139,6 +143,7 @@ struct FileStatus {
 #[serde(rename_all = "camelCase")]
 struct AgentSessionResult {
     file_path: String,
+    source: String,
     total_events: usize,
     sessions: Vec<String>,
     events: Vec<AgentEvent>,
@@ -278,7 +283,9 @@ fn scan_jsonl(
     app: AppHandle,
     state: State<AppState>,
     file_path: String,
+    log_source: Option<String>,
 ) -> Result<FileScanResult, String> {
+    let _source = LogSource::from_option(log_source);
     state.cancel_scan.store(false, Ordering::Relaxed);
     scan_jsonl_inner(file_path, Some(&app), Some(&state.cancel_scan))
 }
@@ -936,7 +943,11 @@ fn cancel_search(state: State<AppState>) {
 }
 
 #[tauri::command]
-fn read_agent_session(file_path: String) -> Result<AgentSessionResult, String> {
+fn read_agent_session(
+    file_path: String,
+    log_source: Option<String>,
+) -> Result<AgentSessionResult, String> {
+    let source = LogSource::from_option(log_source);
     let file = File::open(&file_path).map_err(|err| format!("Failed to open file: {err}"))?;
     let mut reader = BufReader::new(file);
     let mut line = String::new();
@@ -967,7 +978,7 @@ fn read_agent_session(file_path: String) -> Result<AgentSessionResult, String> {
                 "raw": trimmed,
             }),
         };
-        let event = agent_event_from_value(value, line_number, byte_offset);
+        let event = agent_event_from_value(value, line_number, byte_offset, source);
         if let Some(session_id) = &event.session_id {
             sessions.insert(session_id.clone());
         }
@@ -980,6 +991,7 @@ fn read_agent_session(file_path: String) -> Result<AgentSessionResult, String> {
 
     Ok(AgentSessionResult {
         file_path,
+        source: source.as_str().to_string(),
         total_events: events.len(),
         sessions,
         events,
@@ -1700,7 +1712,7 @@ fn text_preview_from_value(value: &Value) -> Option<String> {
     }
 }
 
-fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
+pub(crate) fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| find_first_key(value, &[*key]))
         .and_then(Value::as_str)
@@ -1728,7 +1740,7 @@ fn find_first_key<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
     }
 }
 
-fn contains_key(value: &Value, keys: &[&str]) -> bool {
+pub(crate) fn contains_key(value: &Value, keys: &[&str]) -> bool {
     find_first_key(value, keys).is_some()
 }
 
@@ -1748,7 +1760,12 @@ fn contains_image(value: &Value) -> bool {
     }
 }
 
-fn agent_event_from_value(value: Value, line_number: usize, byte_offset: u64) -> AgentEvent {
+fn agent_event_from_value(
+    value: Value,
+    line_number: usize,
+    byte_offset: u64,
+    source: LogSource,
+) -> AgentEvent {
     let timestamp = first_string(
         &value,
         &["timestamp", "created_at", "createdAt", "time", "ts", "date"],
@@ -1790,24 +1807,36 @@ fn agent_event_from_value(value: Value, line_number: usize, byte_offset: u64) ->
             "parentMessageId",
         ],
     );
-    let role = agent_role(&value);
-    let tool_name = agent_tool_name(&value);
-    let command = agent_command(&value);
-    let text = agent_text(&value);
-    let file_paths = agent_file_paths(&value);
-    let status = first_string(&value, &["status", "state", "outcome"]);
+    let adapter_fields = adapt_agent_event(&value, source);
+    let role = adapter_fields.role.or_else(|| agent_role(&value));
+    let tool_name = adapter_fields.tool_name.or_else(|| agent_tool_name(&value));
+    let command = adapter_fields.command.or_else(|| agent_command(&value));
+    let text = adapter_fields.text.or_else(|| agent_text(&value));
+    let file_paths = if adapter_fields.file_paths.is_empty() {
+        agent_file_paths(&value)
+    } else {
+        adapter_fields.file_paths
+    };
+    let status = adapter_fields
+        .status
+        .or_else(|| first_string(&value, &["status", "state", "outcome"]));
     let duration_ms = first_u64(
         &value,
         &["duration_ms", "durationMs", "elapsed_ms", "elapsedMs"],
     );
-    let provider = agent_provider(&value);
-    let event_type = detect_agent_event_type(
-        &value,
-        role.as_deref(),
-        tool_name.as_deref(),
-        command.as_deref(),
-        &file_paths,
-    );
+    let provider = source
+        .forced_agent_provider()
+        .map(str::to_string)
+        .or_else(|| agent_provider(&value));
+    let event_type = adapter_fields.event_type.unwrap_or_else(|| {
+        detect_agent_event_type(
+            &value,
+            role.as_deref(),
+            tool_name.as_deref(),
+            command.as_deref(),
+            &file_paths,
+        )
+    });
     let preview = text
         .clone()
         .or_else(|| command.clone())
@@ -1865,6 +1894,9 @@ fn detect_agent_event_type(
     let lowered_type = first_string(value, &["type", "event", "kind", "event_type", "eventType"])
         .unwrap_or_default()
         .to_lowercase();
+    if lowered_type.contains("checkpoint") || lowered_type.contains("snapshot") {
+        return "checkpoint".to_string();
+    }
     if lowered_type.contains("tool_result")
         || lowered_type.contains("tool_result_delta")
         || lowered_type.contains("function_result")
@@ -1881,12 +1913,21 @@ fn detect_agent_event_type(
             return "shell_command".to_string();
         }
         if !file_paths.is_empty() || tool_name.is_some_and(is_file_tool) {
-            return "file_edit".to_string();
+            return file_event_type_from_tool(tool_name).unwrap_or_else(|| "file_edit".to_string());
         }
         return "tool_call".to_string();
     }
     if lowered_type.contains("command") || command.is_some() {
         return "shell_command".to_string();
+    }
+    if lowered_type.contains("patch") {
+        return "patch".to_string();
+    }
+    if lowered_type.contains("read") && !file_paths.is_empty() {
+        return "file_read".to_string();
+    }
+    if lowered_type.contains("write") && !file_paths.is_empty() {
+        return "file_write".to_string();
     }
     if lowered_type.contains("edit")
         || lowered_type.contains("patch")
@@ -1908,7 +1949,7 @@ fn detect_agent_event_type(
     }
 }
 
-fn agent_role(value: &Value) -> Option<String> {
+pub(crate) fn agent_role(value: &Value) -> Option<String> {
     if let Some(role) = value
         .get("message")
         .and_then(|message| message.get("role"))
@@ -1997,7 +2038,7 @@ fn agent_tool_name(value: &Value) -> Option<String> {
     })
 }
 
-fn agent_command(value: &Value) -> Option<String> {
+pub(crate) fn agent_command(value: &Value) -> Option<String> {
     first_string(
         value,
         &[
@@ -2025,7 +2066,7 @@ fn agent_command(value: &Value) -> Option<String> {
     })
 }
 
-fn agent_text(value: &Value) -> Option<String> {
+pub(crate) fn agent_text(value: &Value) -> Option<String> {
     if let Some(message) = value.get("message") {
         if let Some(text) = message.get("content").and_then(agent_text_from_content) {
             return Some(text);
@@ -2050,7 +2091,7 @@ fn agent_text(value: &Value) -> Option<String> {
     None
 }
 
-fn agent_text_from_content(value: &Value) -> Option<String> {
+pub(crate) fn agent_text_from_content(value: &Value) -> Option<String> {
     match value {
         Value::String(text) => Some(text.clone()),
         Value::Array(items) => {
@@ -2070,7 +2111,7 @@ fn agent_text_from_content(value: &Value) -> Option<String> {
     }
 }
 
-fn agent_file_paths(value: &Value) -> Vec<String> {
+pub(crate) fn agent_file_paths(value: &Value) -> Vec<String> {
     let mut paths = Vec::new();
     collect_agent_file_paths(value, None, &mut paths);
     paths.sort();
@@ -2131,24 +2172,6 @@ fn looks_like_file_path(value: &str) -> bool {
             .rsplit('/')
             .next()
             .is_some_and(|name| name.contains('.'))
-}
-
-fn is_shell_tool(tool_name: &str) -> bool {
-    let lowered = tool_name.to_lowercase();
-    lowered.contains("bash")
-        || lowered.contains("shell")
-        || lowered.contains("terminal")
-        || lowered.contains("exec")
-        || lowered.contains("command")
-}
-
-fn is_file_tool(tool_name: &str) -> bool {
-    let lowered = tool_name.to_lowercase();
-    lowered.contains("edit")
-        || lowered.contains("patch")
-        || lowered.contains("write")
-        || lowered.contains("read")
-        || lowered.contains("file")
 }
 
 pub fn run() {
@@ -2385,10 +2408,16 @@ mod tests {
         )
         .unwrap();
 
-        let result = read_agent_session(file.path().to_string_lossy().to_string()).unwrap();
+        let result = read_agent_session(
+            file.path().to_string_lossy().to_string(),
+            Some("codex".to_string()),
+        )
+        .unwrap();
 
         assert_eq!(result.total_events, 4);
+        assert_eq!(result.source, "codex");
         assert_eq!(result.sessions, vec!["agent-session-1"]);
+        assert_eq!(result.events[0].provider.as_deref(), Some("codex"));
         assert_eq!(result.events[0].event_type, "user_message");
         assert_eq!(result.events[1].event_type, "assistant_message");
         assert_eq!(result.events[2].event_type, "shell_command");
@@ -2396,8 +2425,222 @@ mod tests {
             result.events[2].command.as_deref(),
             Some("sed -n '1,20p' src/app/App.tsx")
         );
-        assert_eq!(result.events[3].event_type, "file_edit");
+        assert_eq!(result.events[3].event_type, "patch");
         assert_eq!(result.events[3].file_paths, vec!["src/app/App.tsx"]);
+    }
+
+    #[test]
+    fn codex_adapter_classifies_reasoning_patch_and_checkpoint() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        writeln!(
+            file,
+            "{}",
+            json!({"type": "reasoning", "summary": "Need inspect project"})
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({"type": "patch", "tool_name": "apply_patch", "diff": "--- a/src/app.tsx", "path": "src/app.tsx"})
+        )
+        .unwrap();
+        writeln!(file, "{}", json!({"type": "checkpoint", "id": "ckpt-1"})).unwrap();
+
+        let result = read_agent_session(
+            file.path().to_string_lossy().to_string(),
+            Some("codex".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(result.events[0].event_type, "reasoning");
+        assert_eq!(result.events[1].event_type, "patch");
+        assert_eq!(result.events[1].file_paths, vec!["src/app.tsx"]);
+        assert_eq!(result.events[2].event_type, "checkpoint");
+    }
+
+    #[test]
+    fn claude_code_adapter_classifies_tool_use_and_result_parts() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "type": "assistant",
+                "sessionId": "claude-1",
+                "message": {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "name": "Bash",
+                        "input": {"command": "npm test"}
+                    }]
+                }
+            })
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "type": "user",
+                "sessionId": "claude-1",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "tool_result", "content": "tests passed"}]
+                }
+            })
+        )
+        .unwrap();
+
+        let result = read_agent_session(
+            file.path().to_string_lossy().to_string(),
+            Some("claude_code".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(result.events[0].event_type, "shell_command");
+        assert_eq!(result.events[0].command.as_deref(), Some("npm test"));
+        assert_eq!(result.events[1].event_type, "tool_result");
+        assert_eq!(result.events[1].text.as_deref(), Some("tests passed"));
+    }
+
+    #[test]
+    fn opencode_adapter_classifies_file_and_checkpoint_parts() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "type": "part",
+                "part": {"type": "tool", "tool": "read", "input": {"path": "src/main.ts"}}
+            })
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({"type": "part", "part": {"type": "snapshot", "id": "snap-1"}})
+        )
+        .unwrap();
+
+        let result = read_agent_session(
+            file.path().to_string_lossy().to_string(),
+            Some("opencode".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(result.events[0].event_type, "file_read");
+        assert_eq!(result.events[0].file_paths, vec!["src/main.ts"]);
+        assert_eq!(result.events[1].event_type, "checkpoint");
+    }
+
+    #[test]
+    fn openclaw_adapter_classifies_action_patch_and_shell() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "action": {"kind": "patch", "diff": "@@ update", "target_file": "src/lib.rs"}
+            })
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "action": {"kind": "tool", "name": "shell", "args": {"cmd": "cargo test"}}
+            })
+        )
+        .unwrap();
+
+        let result = read_agent_session(
+            file.path().to_string_lossy().to_string(),
+            Some("openclaw".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(result.events[0].event_type, "patch");
+        assert_eq!(result.events[0].file_paths, vec!["src/lib.rs"]);
+        assert_eq!(result.events[1].event_type, "shell_command");
+        assert_eq!(result.events[1].command.as_deref(), Some("cargo test"));
+    }
+
+    #[test]
+    fn codex_fixture_matches_real_payload_schema() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        write!(
+            file,
+            "{}",
+            include_str!("../fixtures/agent_codex_session.jsonl")
+        )
+        .unwrap();
+
+        let result = read_agent_session(
+            file.path().to_string_lossy().to_string(),
+            Some("codex".to_string()),
+        )
+        .unwrap();
+        let types = result
+            .events
+            .iter()
+            .map(|event| event.event_type.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(types.contains(&"checkpoint"));
+        assert!(types.contains(&"user_message"));
+        assert!(types.contains(&"reasoning"));
+        assert!(types.contains(&"assistant_message"));
+        assert!(types.contains(&"shell_command"));
+        assert!(types.contains(&"tool_result"));
+        assert!(types.contains(&"patch"));
+        let shell = result
+            .events
+            .iter()
+            .find(|event| event.event_type == "shell_command")
+            .expect("shell event");
+        assert_eq!(shell.command.as_deref(), Some("sed -n '1,40p' src/app.tsx"));
+    }
+
+    #[test]
+    fn claude_code_fixture_matches_real_message_schema() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        write!(
+            file,
+            "{}",
+            include_str!("../fixtures/agent_claude_code_session.jsonl")
+        )
+        .unwrap();
+
+        let result = read_agent_session(
+            file.path().to_string_lossy().to_string(),
+            Some("claude_code".to_string()),
+        )
+        .unwrap();
+        let types = result
+            .events
+            .iter()
+            .map(|event| event.event_type.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(types.contains(&"checkpoint"));
+        assert!(types.contains(&"user_message"));
+        assert!(types.contains(&"reasoning"));
+        assert!(types.contains(&"file_read"));
+        assert!(types.contains(&"tool_result"));
+        assert!(types.contains(&"shell_command"));
+        let read = result
+            .events
+            .iter()
+            .find(|event| event.event_type == "file_read")
+            .expect("file read event");
+        assert_eq!(read.file_paths, vec!["README.md"]);
+        let shell = result
+            .events
+            .iter()
+            .find(|event| event.event_type == "shell_command")
+            .expect("shell event");
+        assert_eq!(shell.command.as_deref(), Some("npm test"));
     }
 
     #[test]

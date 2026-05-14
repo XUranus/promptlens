@@ -56,6 +56,7 @@ import type {
   CacheInfo,
   FileScanResult,
   FileStatus,
+  LogSource,
   LogSummary,
   NormalizedContent,
   NormalizedMessage,
@@ -66,21 +67,24 @@ import type {
 
 type Filter = "all" | "error" | "success" | "image" | "tool";
 type SortKey = "time" | "latency" | "tokens" | "model" | "status";
-type RightTab =
-  | "metadata"
-  | "trace"
+type SortOrder = "desc" | "asc";
+type LeftTab =
+  | "records"
   | "timeline"
   | "agentFiles"
+  | "trace"
   | "sessions"
   | "analytics"
   | "issues"
+  | "search"
+  | "export";
+type RightTab =
+  | "metadata"
   | "diff"
   | "tools"
   | "error"
   | "raw"
-  | "json"
-  | "search"
-  | "export";
+  | "json";
 type Theme = "dark" | "light";
 
 type SessionGroup = {
@@ -124,6 +128,15 @@ const THEME_KEY = "promptlens.theme";
 const WORKSPACE_KEY = "promptlens.workspace";
 const SETTINGS_KEY = "promptlens.settings";
 
+const LOG_SOURCE_OPTIONS: Array<{ value: LogSource; label: string }> = [
+  { value: "audit", label: "Audit Log" },
+  { value: "codex", label: "Codex" },
+  { value: "opencode", label: "OpenCode" },
+  { value: "openclaw", label: "OpenClaw" },
+  { value: "claude_code", label: "Claude Code" },
+  { value: "generic_agent", label: "Agent JSONL" },
+];
+
 type AppSettings = {
   fontFamily: string;
   fontSize: number;
@@ -146,6 +159,7 @@ const CENTER_MIN = 200;
 
 type WorkspaceTab = {
   id: string;
+  source: LogSource;
   file: FileScanResult;
   selected: LogSummary | null;
   detail: RecordDetail | null;
@@ -172,12 +186,16 @@ export function App() {
   const [query, setQuery] = useState("");
   const [latencyMin, setLatencyMin] = useState("");
   const [tokensMin, setTokensMin] = useState("");
+  const [leftTab, setLeftTab] = useState<LeftTab>("records");
+  const [leftSortOrder, setLeftSortOrder] = useState<SortOrder>("desc");
   const [rightTab, setRightTab] = useState<RightTab>("metadata");
+  const [selectedAgentEvent, setSelectedAgentEvent] = useState<AgentEvent | null>(null);
   const [recentFiles, setRecentFiles] = useState<string[]>(() => loadRecentFiles());
   const [restoredWorkspace, setRestoredWorkspace] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [openSource, setOpenSource] = useState<LogSource>("audit");
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
   const [fadeOut, setFadeOut] = useState(false);
@@ -247,11 +265,12 @@ export function App() {
     setTabs((current) => current.map((tab) => (tab.id === activeTabId ? { ...tab, ...patch } : tab)));
   }
 
-  async function createTabFromScan(result: FileScanResult) {
+  async function createTabFromScan(result: FileScanResult, source: LogSource) {
     const first = result.summaries[0] ?? null;
-    const agentSession = await readAgentSession(result.filePath).catch(() => null);
+    const agentSession = await readAgentSession(result.filePath, source).catch(() => null);
     const newTab: WorkspaceTab = {
       id: result.filePath,
+      source,
       file: result,
       selected: first,
       detail: first ? await readRecord(result.filePath, first.byteOffset, first.lineNumber) : null,
@@ -308,7 +327,7 @@ export function App() {
       }
       if (mod && event.key.toLowerCase() === "f") {
         event.preventDefault();
-        setRightTab("search");
+        setLeftTab("search");
         document.getElementById("file-search-input")?.focus();
       }
       if (mod && event.shiftKey && event.key.toLowerCase() === "c") {
@@ -518,14 +537,15 @@ export function App() {
     };
   }, [leftPanelWidth, rightPanelWidth]);
 
-  async function loadFile(path: string, options?: { quiet?: boolean }) {
+  async function loadFile(path: string, options?: { quiet?: boolean; source?: LogSource }) {
+    const source = options?.source ?? "audit";
     if (!options?.quiet) setError(null);
     setLoading(true);
     setScanProgress(null);
     try {
-      const result = await scanJsonl(path);
+      const result = await scanJsonl(path, source);
       setRecentFiles(rememberRecentFile(result.filePath));
-      await createTabFromScan(result);
+      await createTabFromScan(result, source);
       if (result.cancelled) {
         setError("Scan was cancelled. Partial results are shown.");
       }
@@ -539,11 +559,12 @@ export function App() {
 
   async function handleOpen() {
     const path = await openFileDialog();
-    if (path) await loadFile(path);
+    if (path) await loadFile(path, { source: openSource });
   }
 
   async function handleSelect(summary: LogSummary) {
     if (!file) return;
+    setSelectedAgentEvent(null);
     updateActiveTab({
       selected: summary,
       detail: null,
@@ -594,8 +615,8 @@ export function App() {
   }
 
   async function handleRescan() {
-    if (!file) return;
-    await loadFile(file.filePath);
+    if (!file || !activeTab) return;
+    await loadFile(file.filePath, { source: activeTab.source });
   }
 
   async function handleLoadAppendedRecords() {
@@ -606,7 +627,9 @@ export function App() {
     try {
       const result = await scanJsonlIncremental(file.filePath, file.fileSize, file.totalLines);
       const appendedLines = result.summaries.map((summary) => summary.lineNumber);
-      const nextAgentSession = await readAgentSession(file.filePath).catch(() => activeTab?.agentSession ?? null);
+      const nextAgentSession = await readAgentSession(file.filePath, activeTab?.source ?? "audit").catch(
+        () => activeTab?.agentSession ?? null,
+      );
       updateActiveTab({
         file: {
           ...file,
@@ -694,6 +717,7 @@ export function App() {
 
   async function jumpToResult(result: SearchResult) {
     if (!file) return;
+    setSelectedAgentEvent(null);
     const summary =
       file.summaries.find((item) => item.lineNumber === result.lineNumber) ?? {
         id: `line-${result.lineNumber}`,
@@ -704,6 +728,16 @@ export function App() {
         hasToolCall: false,
       };
     await handleSelect(summary);
+  }
+
+  async function jumpToAgentEvent(event: AgentEvent) {
+    setSelectedAgentEvent(event);
+    await jumpToResult({
+      lineNumber: event.lineNumber,
+      byteOffset: event.byteOffset,
+      context: event.preview ?? event.eventType,
+    });
+    setSelectedAgentEvent(event);
   }
 
   function moveSelection(delta: number) {
@@ -768,6 +802,18 @@ export function App() {
           </svg>
           <span>PromptLens</span>
         </div>
+        <select
+          className="source-select"
+          value={openSource}
+          onChange={(event) => setOpenSource(event.target.value as LogSource)}
+          title="Choose the JSONL source before opening a file"
+        >
+          {LOG_SOURCE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
         <button className="button primary" onClick={handleOpen} disabled={loading}>
           <FolderOpen size={16} />
           {loading ? "Scanning..." : "Open"}
@@ -775,7 +821,7 @@ export function App() {
         <select
           className="recent-select"
           value=""
-          onChange={(event) => event.target.value && void loadFile(event.target.value)}
+          onChange={(event) => event.target.value && void loadFile(event.target.value, { source: openSource })}
         >
           <option value="">Recent</option>
           {recentFiles.map((path) => (
@@ -885,24 +931,40 @@ export function App() {
         style={{ gridTemplateColumns: `${leftPanelWidth}px 1px minmax(0, 1fr) 1px ${rightPanelWidth}px` }}
       >
         <aside className="list-pane">
-          <FileHeader file={file} count={filtered.length} />
-          {file ? (
-            <LogList
-              items={filtered}
-              selected={selected}
-              newLineNumbers={newLineNumbers}
-              onSelect={handleSelect}
-              onCompare={handleSetCompare}
-            />
-          ) : (
-            <div className="empty-state">Open a JSONL audit log to inspect LLM calls locally.</div>
-          )}
+          <LeftPanel
+            tab={leftTab}
+            setTab={setLeftTab}
+            sortOrder={leftSortOrder}
+            setSortOrder={setLeftSortOrder}
+            file={file}
+            filtered={filtered}
+            selected={selected}
+            newLineNumbers={newLineNumbers}
+            agentSession={agentSession}
+            sessions={sessions}
+            issues={issues}
+            filterOptions={filterOptions}
+            searchTerm={searchTerm}
+            setSearchTerm={(term) => updateActiveTab({ searchTerm: term })}
+            searching={searching}
+            searchResults={searchResults}
+            lastSearchIndexed={lastSearchIndexed}
+            analytics={analytics}
+            onSearch={handleSearch}
+            onSelect={handleSelect}
+            onCompare={handleSetCompare}
+            onJump={jumpToResult}
+            onAgentEventSelect={jumpToAgentEvent}
+            onTraceFilter={(trace) => updateActiveTab({ traceFilter: trace, issueOnly: false })}
+            onExport={handleExport}
+            onRawExport={handleRawExport}
+          />
         </aside>
 
         <div className="resize-handle" id="resize-handle-left" />
 
         <section className="conversation-pane">
-          <DetailView detail={detail} selected={selected} onImagePreview={setImagePreview} />
+          <DetailView detail={detail} selected={selected} agentEvent={selectedAgentEvent} onImagePreview={setImagePreview} />
         </section>
 
         <div className="resize-handle" id="resize-handle-right" />
@@ -914,22 +976,6 @@ export function App() {
             detail={detail}
             compareBase={compareBase}
             file={file}
-            filtered={filtered}
-            agentSession={agentSession}
-            sessions={sessions}
-            analytics={analytics}
-            issues={issues}
-            filterOptions={filterOptions}
-            searchTerm={searchTerm}
-            setSearchTerm={(term) => updateActiveTab({ searchTerm: term })}
-            searching={searching}
-            searchResults={searchResults}
-            lastSearchIndexed={lastSearchIndexed}
-            onSearch={handleSearch}
-            onJump={jumpToResult}
-            onTraceFilter={(trace) => updateActiveTab({ traceFilter: trace, issueOnly: false })}
-            onExport={handleExport}
-            onRawExport={handleRawExport}
             onClearCompare={() => updateActiveTab({ compareBase: null })}
           />
         </aside>
@@ -1139,7 +1185,9 @@ function WorkspaceTabs({
           title={tab.file.filePath}
         >
           <span>{tab.file.fileName}</span>
-          <small>{tab.file.cacheHit ? "cache" : `${tab.file.validRecords.toLocaleString()} rows`}</small>
+          <small>
+            {logSourceLabel(tab.source)} · {tab.file.cacheHit ? "cache" : `${tab.file.validRecords.toLocaleString()} rows`}
+          </small>
           <strong
             onClick={(event) => {
               event.stopPropagation();
@@ -1225,15 +1273,18 @@ function LogList({
 function DetailView({
   detail,
   selected,
+  agentEvent,
   onImagePreview,
 }: {
   detail: RecordDetail | null;
   selected: LogSummary | null;
+  agentEvent: AgentEvent | null;
   onImagePreview: (src: string) => void;
 }) {
   if (!selected) return <div className="empty-state">Select a record to inspect its request and response.</div>;
   if (!detail) return <div className="empty-state">Loading record...</div>;
   if (detail.parseError) return <div className="record-error">{detail.parseError}</div>;
+  if (agentEvent) return <AgentEventDetailView event={agentEvent} detail={detail} />;
 
   const requestMessages = detail.normalized?.request?.messages ?? [];
   const responseMessages = detail.normalized?.response?.messages ?? [];
@@ -1273,6 +1324,90 @@ function DetailView({
       )}
     </div>
   );
+}
+
+function AgentEventDetailView({ event, detail }: { event: AgentEvent; detail: RecordDetail }) {
+  return (
+    <div className="detail-view">
+      <div className="detail-title">
+        <div>
+          <h1>{agentEventLabel(event)}</h1>
+          <p>
+            {event.provider || detail.summary.provider || "agent"} · line {event.lineNumber} · {event.sessionId || "no session"}
+          </p>
+        </div>
+        <span className={`pill ${event.status === "error" ? "error" : "success"}`}>{event.eventType}</span>
+      </div>
+
+      {event.command ? (
+        <section className="agent-detail-section">
+          <h2>Command</h2>
+          <pre className="agent-command full">{event.command}</pre>
+        </section>
+      ) : null}
+
+      {event.text ? (
+        <section className="agent-detail-section">
+          <h2>Text</h2>
+          <pre className="plain-text-block">{event.text}</pre>
+        </section>
+      ) : null}
+
+      {event.filePaths.length ? (
+        <section className="agent-detail-section">
+          <h2>Files</h2>
+          <div className="agent-file-tags">
+            {event.filePaths.map((path) => (
+              <span key={path}>{path}</span>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {event.eventType === "patch" ? (
+        <section className="agent-detail-section">
+          <h2>Patch</h2>
+          <PatchPreview raw={event.raw} />
+        </section>
+      ) : null}
+
+      {(event.eventType === "tool_result" || event.eventType === "shell_command") && !event.text ? (
+        <section className="agent-detail-section">
+          <h2>Output</h2>
+          <AgentOutputPreview raw={event.raw} />
+        </section>
+      ) : null}
+
+      <section className="agent-detail-section">
+        <h2>Raw Event</h2>
+        <JsonCode value={event.raw} />
+      </section>
+    </div>
+  );
+}
+
+function PatchPreview({ raw }: { raw: unknown }) {
+  const text = rawTextByKeys(raw, ["patch", "diff", "stdout", "output"]) ?? safeJson(raw);
+  return <pre className="code-block patch-preview">{text}</pre>;
+}
+
+function AgentOutputPreview({ raw }: { raw: unknown }) {
+  const text = rawTextByKeys(raw, ["output", "stdout", "stderr", "result", "content"]) ?? safeJson(raw);
+  return <pre className="plain-text-block">{text}</pre>;
+}
+
+function rawTextByKeys(value: unknown, keys: string[]): string | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const found = record[key];
+    if (typeof found === "string" && found.trim()) return found;
+  }
+  const payload = record.payload;
+  if (payload && typeof payload === "object") return rawTextByKeys(payload, keys);
+  const message = record.message;
+  if (message && typeof message === "object") return rawTextByKeys(message, keys);
+  return null;
 }
 
 function MessageCard({
@@ -1361,16 +1496,17 @@ function ContentBlock({
   return <JsonCode value={content} />;
 }
 
-function RightPanel({
+function LeftPanel({
   tab,
   setTab,
-  detail,
-  compareBase,
+  sortOrder,
+  setSortOrder,
   file,
   filtered,
+  selected,
+  newLineNumbers,
   agentSession,
   sessions,
-  analytics,
   issues,
   filterOptions,
   searchTerm,
@@ -1378,22 +1514,26 @@ function RightPanel({
   searching,
   searchResults,
   lastSearchIndexed,
+  analytics,
   onSearch,
+  onSelect,
+  onCompare,
   onJump,
+  onAgentEventSelect,
   onTraceFilter,
   onExport,
   onRawExport,
-  onClearCompare,
 }: {
-  tab: RightTab;
-  setTab: (tab: RightTab) => void;
-  detail: RecordDetail | null;
-  compareBase: RecordDetail | null;
+  tab: LeftTab;
+  setTab: (tab: LeftTab) => void;
+  sortOrder: SortOrder;
+  setSortOrder: (order: SortOrder) => void;
   file: FileScanResult | null;
   filtered: LogSummary[];
+  selected: LogSummary | null;
+  newLineNumbers: number[];
   agentSession: AgentSessionResult | null;
   sessions: SessionGroup[];
-  analytics: AnalyticsSummary;
   issues: IssueRecord[];
   filterOptions: { traces: string[]; providers: string[]; models: string[] };
   searchTerm: string;
@@ -1401,27 +1541,40 @@ function RightPanel({
   searching: boolean;
   searchResults: SearchResult[];
   lastSearchIndexed: boolean | null;
+  analytics: AnalyticsSummary;
   onSearch: () => void;
+  onSelect: (summary: LogSummary) => void;
+  onCompare: (summary: LogSummary) => void;
   onJump: (result: SearchResult) => void;
+  onAgentEventSelect: (event: AgentEvent) => void;
   onTraceFilter: (trace: string) => void;
   onExport: (kind: "jsonl" | "csv" | "report") => void;
   onRawExport: (kind: "raw_jsonl" | "normalized_jsonl" | "session_markdown") => void;
-  onClearCompare: () => void;
 }) {
+  const records = useMemo(() => orderSummaries(filtered, sortOrder), [filtered, sortOrder]);
+  const orderedEvents = useMemo(
+    () => (agentSession ? { ...agentSession, events: orderAgentEvents(agentSession.events, sortOrder) } : null),
+    [agentSession, sortOrder],
+  );
+  const orderedSessions = useMemo(() => orderSessions(sessions, sortOrder), [sessions, sortOrder]);
+  const orderedIssues = useMemo(() => orderIssues(issues, sortOrder), [issues, sortOrder]);
+  const orderedSearchResults = useMemo(() => orderSearchResults(searchResults, sortOrder), [searchResults, sortOrder]);
+
   return (
-    <div className="right-panel">
-      <div className="tabs">
-        <button className={tab === "metadata" ? "active" : ""} onClick={() => setTab("metadata")} title="Metadata">
+    <div className="left-panel">
+      <FileHeader file={file} count={records.length} />
+      <div className="left-tabs">
+        <button className={tab === "records" ? "active" : ""} onClick={() => setTab("records")} title="Records">
           <FileText size={14} />
-        </button>
-        <button className={tab === "trace" ? "active" : ""} onClick={() => setTab("trace")} title="Trace">
-          <Network size={14} />
         </button>
         <button className={tab === "timeline" ? "active" : ""} onClick={() => setTab("timeline")} title="Agent Timeline">
           <Terminal size={14} />
         </button>
         <button className={tab === "agentFiles" ? "active" : ""} onClick={() => setTab("agentFiles")} title="Agent Files">
           <FileText size={14} />
+        </button>
+        <button className={tab === "trace" ? "active" : ""} onClick={() => setTab("trace")} title="Trace">
+          <Network size={14} />
         </button>
         <button className={tab === "sessions" ? "active" : ""} onClick={() => setTab("sessions")} title="Sessions">
           <Users size={14} />
@@ -1431,6 +1584,80 @@ function RightPanel({
         </button>
         <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")} title="Issues">
           <AlertTriangle size={14} />
+        </button>
+        <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")} title="Search">
+          <Search size={14} />
+        </button>
+        <button className={tab === "export" ? "active" : ""} onClick={() => setTab("export")} title="Export">
+          <FileDown size={14} />
+        </button>
+      </div>
+      <div className="left-controls">
+        <span>{leftTabLabel(tab)}</span>
+        <button onClick={() => setSortOrder(sortOrder === "desc" ? "asc" : "desc")}>
+          {sortOrder === "desc" ? "Newest" : "Oldest"}
+        </button>
+      </div>
+      <div className="left-tab-body">
+        {tab === "records" ? (
+          file ? (
+            <LogList items={records} selected={selected} newLineNumbers={newLineNumbers} onSelect={onSelect} onCompare={onCompare} />
+          ) : (
+            <div className="empty-state">Open a JSONL audit log to inspect LLM calls locally.</div>
+          )
+        ) : null}
+        {tab === "timeline" ? <AgentTimelineView session={orderedEvents} onAgentEventSelect={onAgentEventSelect} /> : null}
+        {tab === "agentFiles" ? <AgentFilesView session={orderedEvents} onAgentEventSelect={onAgentEventSelect} /> : null}
+        {tab === "trace" ? <TraceView file={file} traces={filterOptions.traces} onJump={onJump} onTraceFilter={onTraceFilter} /> : null}
+        {tab === "sessions" ? <SessionsView sessions={orderedSessions} onJump={onJump} onTraceFilter={onTraceFilter} /> : null}
+        {tab === "analytics" ? <AnalyticsView analytics={analytics} filtered={records} /> : null}
+        {tab === "issues" ? <IssuesView issues={orderedIssues} onJump={onJump} /> : null}
+        {tab === "search" ? (
+          <SearchPanel
+            term={searchTerm}
+            setTerm={setSearchTerm}
+            searching={searching}
+            results={orderedSearchResults}
+            indexed={lastSearchIndexed}
+            onSearch={onSearch}
+            onJump={onJump}
+          />
+        ) : null}
+        {tab === "export" ? (
+          <ExportView
+            file={file}
+            filtered={records}
+            analytics={analytics}
+            issues={orderedIssues}
+            onExport={onExport}
+            onRawExport={onRawExport}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function RightPanel({
+  tab,
+  setTab,
+  detail,
+  compareBase,
+  file,
+  onClearCompare,
+}: {
+  tab: RightTab;
+  setTab: (tab: RightTab) => void;
+  detail: RecordDetail | null;
+  compareBase: RecordDetail | null;
+  file: FileScanResult | null;
+  onClearCompare: () => void;
+}) {
+  return (
+    <div className="right-panel">
+      <div className="tabs">
+        <button className={tab === "metadata" ? "active" : ""} onClick={() => setTab("metadata")} title="Metadata">
+          <FileText size={14} />
         </button>
         <button className={tab === "diff" ? "active" : ""} onClick={() => setTab("diff")} title="Diff">
           <GitCompare size={14} />
@@ -1447,46 +1674,13 @@ function RightPanel({
         <button className={tab === "json" ? "active" : ""} onClick={() => setTab("json")} title="JSON">
           <Braces size={14} />
         </button>
-        <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")} title="Search">
-          <Search size={14} />
-        </button>
-        <button className={tab === "export" ? "active" : ""} onClick={() => setTab("export")} title="Export">
-          <FileDown size={14} />
-        </button>
       </div>
       {tab === "metadata" ? <MetadataView detail={detail} file={file} /> : null}
-      {tab === "trace" ? <TraceView file={file} traces={filterOptions.traces} onJump={onJump} onTraceFilter={onTraceFilter} /> : null}
-      {tab === "timeline" ? <AgentTimelineView session={agentSession} onJump={onJump} /> : null}
-      {tab === "agentFiles" ? <AgentFilesView session={agentSession} onJump={onJump} /> : null}
-      {tab === "sessions" ? <SessionsView sessions={sessions} onJump={onJump} onTraceFilter={onTraceFilter} /> : null}
-      {tab === "analytics" ? <AnalyticsView analytics={analytics} filtered={filtered} /> : null}
-      {tab === "issues" ? <IssuesView issues={issues} onJump={onJump} /> : null}
       {tab === "diff" ? <DiffView base={compareBase} target={detail} onClear={onClearCompare} /> : null}
       {tab === "tools" ? <ToolCallsView detail={detail} /> : null}
       {tab === "error" ? <ErrorView detail={detail} /> : null}
       {tab === "raw" ? <RawPayloadView detail={detail} /> : null}
       {tab === "json" ? <JsonTreeView detail={detail} /> : null}
-      {tab === "search" ? (
-        <SearchPanel
-          term={searchTerm}
-          setTerm={setSearchTerm}
-          searching={searching}
-          results={searchResults}
-          indexed={lastSearchIndexed}
-          onSearch={onSearch}
-          onJump={onJump}
-        />
-      ) : null}
-      {tab === "export" ? (
-        <ExportView
-          file={file}
-          filtered={filtered}
-          analytics={analytics}
-          issues={issues}
-          onExport={onExport}
-          onRawExport={onRawExport}
-        />
-      ) : null}
     </div>
   );
 }
@@ -1597,10 +1791,10 @@ function SessionsView({
 
 function AgentTimelineView({
   session,
-  onJump,
+  onAgentEventSelect,
 }: {
   session: AgentSessionResult | null;
-  onJump: (result: SearchResult) => void;
+  onAgentEventSelect: (event: AgentEvent) => void;
 }) {
   if (!session) return <div className="empty-state">Open a JSONL file to build an agent timeline.</div>;
   if (!session.events.length) return <div className="empty-state">No agent events found in this file.</div>;
@@ -1609,7 +1803,8 @@ function AgentTimelineView({
       <div className="section-head">
         <h3>Agent Timeline</h3>
         <span>
-          {session.totalEvents.toLocaleString()} events · {session.sessions.length.toLocaleString()} sessions
+          {logSourceLabel(session.source)} · {session.totalEvents.toLocaleString()} events ·{" "}
+          {session.sessions.length.toLocaleString()} sessions
         </span>
       </div>
       <div className="agent-timeline">
@@ -1617,13 +1812,7 @@ function AgentTimelineView({
           <button
             key={`${event.lineNumber}-${event.byteOffset}-${event.id}`}
             className={`agent-event-card ${event.eventType}`}
-            onClick={() =>
-              onJump({
-                lineNumber: event.lineNumber,
-                byteOffset: event.byteOffset,
-                context: event.preview ?? event.eventType,
-              })
-            }
+            onClick={() => onAgentEventSelect(event)}
           >
             <div className="agent-event-top">
               <span className="event-type">{agentEventLabel(event)}</span>
@@ -1653,10 +1842,10 @@ function AgentTimelineView({
 
 function AgentFilesView({
   session,
-  onJump,
+  onAgentEventSelect,
 }: {
   session: AgentSessionResult | null;
-  onJump: (result: SearchResult) => void;
+  onAgentEventSelect: (event: AgentEvent) => void;
 }) {
   if (!session) return <div className="empty-state">Open a JSONL file to inspect agent file activity.</div>;
   const files = buildAgentFileActivity(session.events);
@@ -1672,13 +1861,7 @@ function AgentFilesView({
           <button
             key={file.path}
             className="agent-file-card"
-            onClick={() =>
-              onJump({
-                lineNumber: file.first.lineNumber,
-                byteOffset: file.first.byteOffset,
-                context: file.path,
-              })
-            }
+            onClick={() => onAgentEventSelect(file.first)}
           >
             <strong>{file.path}</strong>
             <div className="agent-event-meta">
@@ -1700,6 +1883,9 @@ function AgentFilesView({
 
 function agentEventLabel(event: AgentEvent) {
   if (event.eventType === "shell_command") return "Shell";
+  if (event.eventType === "file_read") return "Read";
+  if (event.eventType === "file_write") return "Write";
+  if (event.eventType === "patch") return "Patch";
   if (event.eventType === "file_edit") return "File";
   if (event.eventType === "tool_call") return event.toolName || "Tool";
   if (event.eventType === "tool_result") return "Result";
@@ -1708,6 +1894,7 @@ function agentEventLabel(event: AgentEvent) {
   if (event.eventType === "plan_update") return "Plan";
   if (event.eventType === "reasoning") return "Reasoning";
   if (event.eventType === "system") return "System";
+  if (event.eventType === "checkpoint") return "Checkpoint";
   if (event.eventType === "error") return "Error";
   return "Event";
 }
@@ -2574,4 +2761,57 @@ function savePanelWidth(side: "left" | "right", value: number) {
 
 function maxRightPanelWidth(availableWidth: number) {
   return Math.max(RIGHT_MIN, Math.floor(availableWidth * RIGHT_MAX_RATIO));
+}
+
+function logSourceLabel(source: LogSource | string) {
+  return LOG_SOURCE_OPTIONS.find((option) => option.value === source)?.label ?? "JSONL";
+}
+
+function leftTabLabel(tab: LeftTab) {
+  if (tab === "records") return "Records";
+  if (tab === "timeline") return "Agent Timeline";
+  if (tab === "agentFiles") return "Agent Files";
+  if (tab === "trace") return "Trace";
+  if (tab === "sessions") return "Sessions";
+  if (tab === "analytics") return "Analytics";
+  if (tab === "issues") return "Issues";
+  if (tab === "search") return "Search";
+  return "Export";
+}
+
+function orderFactor(order: SortOrder) {
+  return order === "asc" ? 1 : -1;
+}
+
+function lineTimeValue(item: { lineNumber: number; timestamp?: string }) {
+  return Date.parse(item.timestamp ?? "") || item.lineNumber;
+}
+
+function orderSummaries(items: LogSummary[], order: SortOrder) {
+  const factor = orderFactor(order);
+  return [...items].sort((a, b) => factor * (lineTimeValue(a) - lineTimeValue(b)));
+}
+
+function orderAgentEvents(items: AgentEvent[], order: SortOrder) {
+  const factor = orderFactor(order);
+  return [...items].sort((a, b) => factor * (lineTimeValue(a) - lineTimeValue(b)));
+}
+
+function orderSessions(items: SessionGroup[], order: SortOrder) {
+  const factor = orderFactor(order);
+  return [...items].sort((a, b) => {
+    const aValue = Date.parse(a.startTime ?? "") || a.startLine;
+    const bValue = Date.parse(b.startTime ?? "") || b.startLine;
+    return factor * (aValue - bValue);
+  });
+}
+
+function orderIssues(items: IssueRecord[], order: SortOrder) {
+  const factor = orderFactor(order);
+  return [...items].sort((a, b) => factor * (lineTimeValue(a.summary) - lineTimeValue(b.summary)));
+}
+
+function orderSearchResults(items: SearchResult[], order: SortOrder) {
+  const factor = orderFactor(order);
+  return [...items].sort((a, b) => factor * (a.lineNumber - b.lineNumber));
 }

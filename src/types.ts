@@ -136,13 +136,19 @@ export type FileStatus = {
   modified?: string;
 };
 
+export type LogSource = "audit" | "codex" | "opencode" | "openclaw" | "claude_code" | "generic_agent";
+
 export type AgentEventType =
   | "user_message"
   | "assistant_message"
   | "tool_call"
   | "tool_result"
   | "shell_command"
+  | "file_read"
+  | "file_write"
+  | "patch"
   | "file_edit"
+  | "checkpoint"
   | "plan_update"
   | "reasoning"
   | "error"
@@ -172,6 +178,7 @@ export type AgentEvent = {
 
 export type AgentSessionResult = {
   filePath: string;
+  source: LogSource | string;
   totalEvents: number;
   sessions: string[];
   events: AgentEvent[];
