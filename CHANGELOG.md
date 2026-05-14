@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.4.0 - Analysis & Diagnostics
+
+### Added
+
+- Heuristic session grouping for scanned records by provider, model, and time or line windows.
+- Analytics panel with record totals, error rate, latency percentiles, token totals, and top model/provider counts.
+- Issue panel for invalid JSON, error responses, high latency, high token usage, and empty successful records.
+- Export panel for filtered summaries as JSONL, CSV, and Markdown reports.
+- Native save-file command for local report/export writing.
+
+### Changed
+
+- Right panel now includes diagnostics-focused tabs alongside raw record debugging tools.
+- Markdown reports summarize the active filters, top models/providers, sessions, and detected issues.
+
+### Known Limits
+
+- Session grouping is heuristic until source logs expose stable trace, conversation, or request identifiers in summaries.
+- Exports contain summary-level records; full raw-record batch export remains future work.
+
 ## v0.3.2 - Incremental Indexing
 
 ### Added

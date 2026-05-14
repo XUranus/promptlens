@@ -2,10 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen } from "@tauri-apps/api/event";
 import {
+  AlertTriangle,
+  BarChart3,
   ChevronDown,
   ChevronRight,
   Copy,
   Database,
+  FileDown,
   FileJson,
   FolderOpen,
   GitCompare,
@@ -14,6 +17,7 @@ import {
   RotateCw,
   Search,
   Sun,
+  Users,
   Wrench,
   X,
 } from "lucide-react";
@@ -30,6 +34,7 @@ import {
   getFileStatus,
   openFileDialog,
   readRecord,
+  saveTextFile,
   scanJsonl,
   scanJsonlIncremental,
   searchJsonl,
@@ -48,8 +53,55 @@ import type {
 
 type Filter = "all" | "error" | "success" | "image" | "tool";
 type SortKey = "time" | "latency" | "tokens" | "model" | "status";
-type RightTab = "metadata" | "diff" | "tools" | "error" | "raw" | "json" | "search";
+type RightTab =
+  | "metadata"
+  | "sessions"
+  | "analytics"
+  | "issues"
+  | "diff"
+  | "tools"
+  | "error"
+  | "raw"
+  | "json"
+  | "search"
+  | "export";
 type Theme = "dark" | "light";
+
+type SessionGroup = {
+  id: string;
+  label: string;
+  records: LogSummary[];
+  startLine: number;
+  endLine: number;
+  startTime?: string;
+  endTime?: string;
+  provider: string;
+  model: string;
+  errors: number;
+  totalTokens: number;
+  avgLatencyMs: number | null;
+};
+
+type AnalyticsSummary = {
+  total: number;
+  success: number;
+  errors: number;
+  invalid: number;
+  errorRate: number;
+  p95Latency: number | null;
+  p99Latency: number | null;
+  totalTokens: number;
+  p95Tokens: number | null;
+  topModels: Array<{ name: string; count: number }>;
+  topProviders: Array<{ name: string; count: number }>;
+};
+
+type IssueRecord = {
+  summary: LogSummary;
+  kind: "error" | "invalid" | "latency" | "tokens" | "empty";
+  message: string;
+  severity: "high" | "medium" | "low";
+};
 
 const THEME_KEY = "promptlens.theme";
 const WORKSPACE_KEY = "promptlens.workspace";
@@ -120,6 +172,9 @@ export function App() {
       })
       .sort((a, b) => compareSummary(a, b, sortKey));
   }, [file, filter, latencyMin, query, sortKey, tokensMin]);
+  const sessions = useMemo(() => buildSessionGroups(file?.summaries ?? []), [file]);
+  const analytics = useMemo(() => buildAnalytics(filtered), [filtered]);
+  const issues = useMemo(() => detectIssues(filtered, analytics), [analytics, filtered]);
 
   function updateActiveTab(patch: Partial<WorkspaceTab>) {
     setTabs((current) => current.map((tab) => (tab.id === activeTabId ? { ...tab, ...patch } : tab)));
@@ -351,6 +406,24 @@ export function App() {
     setTabs((current) => current.map((tab) => ({ ...tab, file: { ...tab.file, cacheHit: false } })));
   }
 
+  async function handleExport(kind: "jsonl" | "csv" | "report") {
+    if (!file) return;
+    try {
+      const baseName = file.fileName.replace(/\.[^.]+$/, "");
+      const payload =
+        kind === "jsonl"
+          ? summariesToJsonl(filtered)
+          : kind === "csv"
+            ? summariesToCsv(filtered)
+            : buildMarkdownReport(file, filtered, analytics, issues, sessions);
+      const extension = kind === "report" ? "md" : kind;
+      const saved = await saveTextFile(`${baseName}-${kind}.${extension}`, payload);
+      if (saved) setError(`Saved ${saved}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   function handleCloseTab(tabId: string) {
     setTabs((current) => {
       const next = current.filter((tab) => tab.id !== tabId);
@@ -518,6 +591,10 @@ export function App() {
             detail={detail}
             compareBase={compareBase}
             file={file}
+            filtered={filtered}
+            sessions={sessions}
+            analytics={analytics}
+            issues={issues}
             searchTerm={searchTerm}
             setSearchTerm={(term) => updateActiveTab({ searchTerm: term })}
             searching={searching}
@@ -525,6 +602,7 @@ export function App() {
             lastSearchIndexed={lastSearchIndexed}
             onSearch={handleSearch}
             onJump={jumpToResult}
+            onExport={handleExport}
             onClearCompare={() => updateActiveTab({ compareBase: null })}
           />
         </aside>
@@ -829,6 +907,10 @@ function RightPanel({
   detail,
   compareBase,
   file,
+  filtered,
+  sessions,
+  analytics,
+  issues,
   searchTerm,
   setSearchTerm,
   searching,
@@ -836,6 +918,7 @@ function RightPanel({
   lastSearchIndexed,
   onSearch,
   onJump,
+  onExport,
   onClearCompare,
 }: {
   tab: RightTab;
@@ -843,6 +926,10 @@ function RightPanel({
   detail: RecordDetail | null;
   compareBase: RecordDetail | null;
   file: FileScanResult | null;
+  filtered: LogSummary[];
+  sessions: SessionGroup[];
+  analytics: AnalyticsSummary;
+  issues: IssueRecord[];
   searchTerm: string;
   setSearchTerm: (term: string) => void;
   searching: boolean;
@@ -850,6 +937,7 @@ function RightPanel({
   lastSearchIndexed: boolean | null;
   onSearch: () => void;
   onJump: (result: SearchResult) => void;
+  onExport: (kind: "jsonl" | "csv" | "report") => void;
   onClearCompare: () => void;
 }) {
   return (
@@ -857,6 +945,15 @@ function RightPanel({
       <div className="tabs">
         <button className={tab === "metadata" ? "active" : ""} onClick={() => setTab("metadata")}>
           Metadata
+        </button>
+        <button className={tab === "sessions" ? "active" : ""} onClick={() => setTab("sessions")} title="Sessions">
+          <Users size={14} />
+        </button>
+        <button className={tab === "analytics" ? "active" : ""} onClick={() => setTab("analytics")} title="Analytics">
+          <BarChart3 size={14} />
+        </button>
+        <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")} title="Issues">
+          <AlertTriangle size={14} />
         </button>
         <button className={tab === "diff" ? "active" : ""} onClick={() => setTab("diff")}>
           Diff
@@ -876,8 +973,14 @@ function RightPanel({
         <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")}>
           Search
         </button>
+        <button className={tab === "export" ? "active" : ""} onClick={() => setTab("export")} title="Export">
+          <FileDown size={14} />
+        </button>
       </div>
       {tab === "metadata" ? <MetadataView detail={detail} file={file} /> : null}
+      {tab === "sessions" ? <SessionsView sessions={sessions} onJump={onJump} /> : null}
+      {tab === "analytics" ? <AnalyticsView analytics={analytics} filtered={filtered} /> : null}
+      {tab === "issues" ? <IssuesView issues={issues} onJump={onJump} /> : null}
       {tab === "diff" ? <DiffView base={compareBase} target={detail} onClear={onClearCompare} /> : null}
       {tab === "tools" ? <ToolCallsView detail={detail} /> : null}
       {tab === "error" ? <ErrorView detail={detail} /> : null}
@@ -894,6 +997,157 @@ function RightPanel({
           onJump={onJump}
         />
       ) : null}
+      {tab === "export" ? (
+        <ExportView file={file} filtered={filtered} analytics={analytics} issues={issues} onExport={onExport} />
+      ) : null}
+    </div>
+  );
+}
+
+function SessionsView({ sessions, onJump }: { sessions: SessionGroup[]; onJump: (result: SearchResult) => void }) {
+  if (!sessions.length) return <div className="empty-state">Open a file to inspect grouped sessions.</div>;
+  return (
+    <div className="debug-view">
+      <div className="section-head">
+        <h3>Heuristic Sessions</h3>
+        <span>{sessions.length.toLocaleString()} groups</span>
+      </div>
+      <div className="session-list">
+        {sessions.slice(0, 200).map((session) => (
+          <button
+            key={session.id}
+            className="session-card"
+            onClick={() => onJump({ lineNumber: session.startLine, byteOffset: session.records[0]?.byteOffset ?? 0, context: session.label })}
+          >
+            <div className="session-top">
+              <strong>{session.label}</strong>
+              <span>
+                lines {session.startLine}-{session.endLine}
+              </span>
+            </div>
+            <div className="session-metrics">
+              <span>{session.records.length.toLocaleString()} records</span>
+              <span>{session.errors.toLocaleString()} issues</span>
+              <span>{formatTokens(session.totalTokens || undefined)}</span>
+              <span>{session.avgLatencyMs === null ? "latency ?" : formatLatency(Math.round(session.avgLatencyMs))}</span>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsView({ analytics, filtered }: { analytics: AnalyticsSummary; filtered: LogSummary[] }) {
+  if (!filtered.length) return <div className="empty-state">No records match the current filters.</div>;
+  return (
+    <div className="debug-view">
+      <div className="metric-grid">
+        <MetricTile label="Records" value={analytics.total.toLocaleString()} />
+        <MetricTile label="Errors" value={`${analytics.errors.toLocaleString()} (${analytics.errorRate.toFixed(1)}%)`} />
+        <MetricTile label="P95 Latency" value={analytics.p95Latency === null ? "-" : formatLatency(analytics.p95Latency)} />
+        <MetricTile label="P99 Latency" value={analytics.p99Latency === null ? "-" : formatLatency(analytics.p99Latency)} />
+        <MetricTile label="Total Tokens" value={analytics.totalTokens.toLocaleString()} />
+        <MetricTile label="P95 Tokens" value={analytics.p95Tokens?.toLocaleString() ?? "-"} />
+      </div>
+      <h3>Models</h3>
+      <RankList rows={analytics.topModels} />
+      <h3>Providers</h3>
+      <RankList rows={analytics.topProviders} />
+    </div>
+  );
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="metric-tile">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function RankList({ rows }: { rows: Array<{ name: string; count: number }> }) {
+  return (
+    <div className="rank-list">
+      {rows.map((row) => (
+        <div key={row.name} className="rank-row">
+          <span>{row.name}</span>
+          <strong>{row.count.toLocaleString()}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function IssuesView({ issues, onJump }: { issues: IssueRecord[]; onJump: (result: SearchResult) => void }) {
+  if (!issues.length) return <div className="empty-state">No obvious issues in the current filter.</div>;
+  return (
+    <div className="debug-view">
+      <div className="section-head">
+        <h3>Detected Issues</h3>
+        <span>{issues.length.toLocaleString()} records</span>
+      </div>
+      <div className="issue-list">
+        {issues.slice(0, 300).map((issue) => (
+          <button
+            key={`${issue.kind}-${issue.summary.lineNumber}`}
+            className={`issue-card ${issue.severity}`}
+            onClick={() =>
+              onJump({
+                lineNumber: issue.summary.lineNumber,
+                byteOffset: issue.summary.byteOffset,
+                context: issue.message,
+              })
+            }
+          >
+            <div>
+              <strong>Line {issue.summary.lineNumber}</strong>
+              <span>{issue.message}</span>
+            </div>
+            <small>{issue.summary.model || "unknown model"}</small>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ExportView({
+  file,
+  filtered,
+  analytics,
+  issues,
+  onExport,
+}: {
+  file: FileScanResult | null;
+  filtered: LogSummary[];
+  analytics: AnalyticsSummary;
+  issues: IssueRecord[];
+  onExport: (kind: "jsonl" | "csv" | "report") => void;
+}) {
+  if (!file) return <div className="empty-state">Open a file to export records and reports.</div>;
+  return (
+    <div className="debug-view">
+      <div className="export-summary">
+        <MetricTile label="Filtered Records" value={filtered.length.toLocaleString()} />
+        <MetricTile label="Detected Issues" value={issues.length.toLocaleString()} />
+        <MetricTile label="Error Rate" value={`${analytics.errorRate.toFixed(1)}%`} />
+      </div>
+      <div className="export-actions">
+        <button onClick={() => onExport("jsonl")}>
+          <FileDown size={15} />
+          Export JSONL summaries
+        </button>
+        <button onClick={() => onExport("csv")}>
+          <FileDown size={15} />
+          Export CSV summaries
+        </button>
+        <button onClick={() => onExport("report")}>
+          <FileDown size={15} />
+          Export Markdown report
+        </button>
+      </div>
     </div>
   );
 }
@@ -1253,6 +1507,202 @@ function compareSummary(a: LogSummary, b: LogSummary, key: SortKey) {
   if (key === "model") return (a.model ?? "").localeCompare(b.model ?? "");
   if (key === "status") return a.status.localeCompare(b.status);
   return (Date.parse(b.timestamp ?? "") || b.lineNumber) - (Date.parse(a.timestamp ?? "") || a.lineNumber);
+}
+
+function buildSessionGroups(items: LogSummary[]): SessionGroup[] {
+  const groups = new Map<string, LogSummary[]>();
+  for (const item of items) {
+    const time = Date.parse(item.timestamp ?? "");
+    const bucket = Number.isFinite(time) ? Math.floor(time / (5 * 60 * 1000)) : Math.floor(item.lineNumber / 25);
+    const provider = item.provider || "unknown provider";
+    const model = item.model || "unknown model";
+    const id = `${provider}|${model}|${bucket}`;
+    groups.set(id, [...(groups.get(id) ?? []), item]);
+  }
+  return Array.from(groups.entries())
+    .map(([id, records]) => {
+      const sorted = [...records].sort((a, b) => a.lineNumber - b.lineNumber);
+      const latencies = sorted.map((item) => item.latencyMs).filter((value): value is number => value !== undefined);
+      const provider = sorted[0]?.provider || "unknown provider";
+      const model = sorted[0]?.model || "unknown model";
+      const startTime = sorted.find((item) => item.timestamp)?.timestamp;
+      const endTime = [...sorted].reverse().find((item) => item.timestamp)?.timestamp;
+      return {
+        id,
+        label: `${provider} / ${model}`,
+        records: sorted,
+        startLine: sorted[0]?.lineNumber ?? 0,
+        endLine: sorted[sorted.length - 1]?.lineNumber ?? 0,
+        startTime,
+        endTime,
+        provider,
+        model,
+        errors: sorted.filter((item) => item.status === "error" || item.status === "invalid_json").length,
+        totalTokens: sorted.reduce((sum, item) => sum + (item.totalTokens ?? 0), 0),
+        avgLatencyMs: latencies.length ? latencies.reduce((sum, value) => sum + value, 0) / latencies.length : null,
+      };
+    })
+    .sort((a, b) => a.startLine - b.startLine);
+}
+
+function buildAnalytics(items: LogSummary[]): AnalyticsSummary {
+  const latencies = items.map((item) => item.latencyMs).filter((value): value is number => value !== undefined);
+  const tokens = items.map((item) => item.totalTokens).filter((value): value is number => value !== undefined);
+  const errors = items.filter((item) => item.status === "error" || item.status === "invalid_json").length;
+  return {
+    total: items.length,
+    success: items.filter((item) => item.status === "success").length,
+    errors,
+    invalid: items.filter((item) => item.status === "invalid_json").length,
+    errorRate: items.length ? (errors / items.length) * 100 : 0,
+    p95Latency: percentile(latencies, 0.95),
+    p99Latency: percentile(latencies, 0.99),
+    totalTokens: tokens.reduce((sum, value) => sum + value, 0),
+    p95Tokens: percentile(tokens, 0.95),
+    topModels: topCounts(items.map((item) => item.model || "unknown model")),
+    topProviders: topCounts(items.map((item) => item.provider || "unknown provider")),
+  };
+}
+
+function detectIssues(items: LogSummary[], analytics: AnalyticsSummary): IssueRecord[] {
+  const latencyThreshold = Math.max(analytics.p95Latency ?? 0, 10_000);
+  const tokenThreshold = Math.max(analytics.p95Tokens ?? 0, 8_000);
+  return items
+    .flatMap((summary): IssueRecord[] => {
+      const issues: IssueRecord[] = [];
+      if (summary.status === "invalid_json") {
+        issues.push({ summary, kind: "invalid", message: summary.parseError || "Invalid JSON line", severity: "high" });
+      } else if (summary.status === "error") {
+        issues.push({ summary, kind: "error", message: summary.preview || "Error response", severity: "high" });
+      }
+      if (summary.latencyMs !== undefined && summary.latencyMs >= latencyThreshold) {
+        issues.push({
+          summary,
+          kind: "latency",
+          message: `High latency: ${formatLatency(summary.latencyMs)}`,
+          severity: "medium",
+        });
+      }
+      if (summary.totalTokens !== undefined && summary.totalTokens >= tokenThreshold) {
+        issues.push({
+          summary,
+          kind: "tokens",
+          message: `High token usage: ${summary.totalTokens.toLocaleString()} tokens`,
+          severity: "medium",
+        });
+      }
+      if (!summary.preview && summary.status === "success") {
+        issues.push({ summary, kind: "empty", message: "Successful record has no preview text", severity: "low" });
+      }
+      return issues;
+    })
+    .sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || a.summary.lineNumber - b.summary.lineNumber);
+}
+
+function percentile(values: number[], quantile: number): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.ceil(sorted.length * quantile) - 1);
+  return sorted[index];
+}
+
+function topCounts(values: string[]) {
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return Array.from(counts.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+    .slice(0, 8);
+}
+
+function severityRank(severity: IssueRecord["severity"]) {
+  if (severity === "high") return 3;
+  if (severity === "medium") return 2;
+  return 1;
+}
+
+function summariesToJsonl(items: LogSummary[]) {
+  return items.map((item) => JSON.stringify(item)).join("\n") + (items.length ? "\n" : "");
+}
+
+function summariesToCsv(items: LogSummary[]) {
+  const header = [
+    "lineNumber",
+    "byteOffset",
+    "timestamp",
+    "provider",
+    "model",
+    "status",
+    "latencyMs",
+    "promptTokens",
+    "completionTokens",
+    "totalTokens",
+    "hasImage",
+    "hasToolCall",
+    "preview",
+  ];
+  const rows = items.map((item) =>
+    [
+      item.lineNumber,
+      item.byteOffset,
+      item.timestamp ?? "",
+      item.provider ?? "",
+      item.model ?? "",
+      item.status,
+      item.latencyMs ?? "",
+      item.promptTokens ?? "",
+      item.completionTokens ?? "",
+      item.totalTokens ?? "",
+      item.hasImage,
+      item.hasToolCall,
+      item.preview ?? item.parseError ?? "",
+    ]
+      .map(csvCell)
+      .join(","),
+  );
+  return [header.join(","), ...rows].join("\n") + "\n";
+}
+
+function csvCell(value: unknown) {
+  const text = String(value);
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function buildMarkdownReport(
+  file: FileScanResult,
+  filtered: LogSummary[],
+  analytics: AnalyticsSummary,
+  issues: IssueRecord[],
+  sessions: SessionGroup[],
+) {
+  const lines = [
+    `# PromptLens Report: ${file.fileName}`,
+    "",
+    `- Source: ${file.filePath}`,
+    `- Filtered records: ${filtered.length.toLocaleString()}`,
+    `- Total lines: ${file.totalLines.toLocaleString()}`,
+    `- Valid records: ${file.validRecords.toLocaleString()}`,
+    `- Invalid records: ${file.invalidRecords.toLocaleString()}`,
+    `- Error rate: ${analytics.errorRate.toFixed(1)}%`,
+    `- P95 latency: ${analytics.p95Latency === null ? "-" : formatLatency(analytics.p95Latency)}`,
+    `- P99 latency: ${analytics.p99Latency === null ? "-" : formatLatency(analytics.p99Latency)}`,
+    `- Total tokens: ${analytics.totalTokens.toLocaleString()}`,
+    "",
+    "## Top Models",
+    ...analytics.topModels.map((row) => `- ${row.name}: ${row.count.toLocaleString()}`),
+    "",
+    "## Top Providers",
+    ...analytics.topProviders.map((row) => `- ${row.name}: ${row.count.toLocaleString()}`),
+    "",
+    "## Sessions",
+    ...sessions.slice(0, 20).map((session) => `- ${session.label}, lines ${session.startLine}-${session.endLine}, ${session.records.length} records, ${session.errors} issues`),
+    "",
+    "## Issues",
+    ...(issues.length
+      ? issues.slice(0, 50).map((issue) => `- ${issue.severity.toUpperCase()} line ${issue.summary.lineNumber}: ${issue.message}`)
+      : ["- No obvious issues in the current filter."]),
+  ];
+  return `${lines.join("\n")}\n`;
 }
 
 function loadWorkspace(): { paths: string[]; activePath: string | null } {

@@ -597,7 +597,7 @@ select {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(11, minmax(38px, 1fr));
   position: sticky;
   top: 0;
   z-index: 2;
@@ -606,6 +606,9 @@ select {
 }
 
 .tabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 40px;
   border: 0;
   border-right: 1px solid var(--border);
@@ -641,6 +644,128 @@ select {
 .diff-metrics {
   display: grid;
   gap: 6px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.session-list,
+.issue-list,
+.rank-list,
+.export-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.session-card,
+.issue-card,
+.export-actions button {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--text);
+  text-align: left;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.session-top,
+.session-metrics,
+.rank-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-top span,
+.session-metrics,
+.issue-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.session-metrics {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.metric-grid,
+.export-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.metric-tile {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface);
+}
+
+.metric-tile span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.metric-tile strong {
+  font-size: 18px;
+}
+
+.rank-row {
+  border-bottom: 1px solid var(--border);
+  padding: 7px 0;
+}
+
+.issue-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.issue-card div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.issue-card span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.issue-card.high {
+  border-color: var(--danger-border);
+  background: var(--danger);
+}
+
+.issue-card.medium {
+  border-color: #806734;
+  background: rgb(128 103 52 / 14%);
+}
+
+.export-summary {
+  margin-bottom: 12px;
+}
+
+.export-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .diff-metric {

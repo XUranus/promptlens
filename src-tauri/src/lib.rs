@@ -275,6 +275,18 @@ fn get_file_status(file_path: String) -> FileStatus {
     }
 }
 
+#[tauri::command]
+fn save_text_file(default_file_name: String, contents: String) -> Result<Option<String>, String> {
+    let Some(path) = rfd::FileDialog::new()
+        .set_file_name(default_file_name)
+        .save_file()
+    else {
+        return Ok(None);
+    };
+    fs::write(&path, contents).map_err(|err| format!("Failed to save file: {err}"))?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
 fn scan_jsonl_inner(
     file_path: String,
     app: Option<&AppHandle>,
@@ -1459,6 +1471,7 @@ pub fn run() {
             clear_scan_cache,
             get_cache_info,
             get_file_status,
+            save_text_file,
             read_record,
             search_jsonl,
             cancel_search

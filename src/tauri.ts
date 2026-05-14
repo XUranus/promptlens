@@ -40,6 +40,10 @@ export async function getFileStatus(filePath: string): Promise<FileStatus> {
   return invoke("get_file_status", { filePath });
 }
 
+export async function saveTextFile(defaultFileName: string, contents: string): Promise<string | null> {
+  return invoke("save_text_file", { defaultFileName, contents });
+}
+
 export async function readRecord(
   filePath: string,
   byteOffset: number,

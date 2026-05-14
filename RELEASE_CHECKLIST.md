@@ -59,3 +59,12 @@ Current Linux bundle targets are `deb` and `rpm`. AppImage should be re-enabled 
 - Search for text from an indexed row and verify the Search panel reports indexed search.
 - Search for a substring that misses FTS token matching and verify streaming fallback still returns matches.
 - Truncate or rewrite the active file and verify the UI asks for a full rescan.
+
+## v0.4.0 Analysis & Diagnostics
+
+- Open `samples/basic.jsonl` and verify Sessions, Analytics, Issues, and Export tabs render.
+- Apply list filters and verify Analytics/Issues/Export reflect the filtered record set.
+- Verify issue cards jump to the referenced record.
+- Export JSONL summaries, CSV summaries, and Markdown report through the native save dialog.
+- Confirm Markdown report includes top models/providers, sessions, and detected issues.
+- Confirm rewritten or truncated files still require full rescan after diagnostics tabs are used.
