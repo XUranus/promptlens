@@ -28,7 +28,7 @@ npm run sample:large
 node scripts/generate-large-sample.mjs [rows] [mb]
 ```
 
-There is no frontend test framework, linter, or formatter configured. There is no CI/CD.
+There is no frontend test framework, linter, or formatter configured. GitHub Actions builds macOS, Linux, and Windows artifacts.
 
 ## Architecture
 

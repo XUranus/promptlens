@@ -77,3 +77,12 @@ Current Linux bundle targets are `deb` and `rpm`. AppImage should be re-enabled 
 - Use provider/model selectors and issue-only filter together with text search.
 - Export raw JSONL, normalized JSONL, and session Markdown for the active filtered records.
 - Confirm cache schema upgrade performs a cold scan once and then cache hits include trace metadata.
+
+## v0.5.1 Frosted UI & Packaging
+
+- Verify the custom title bar can drag, minimize, maximize, restore, close, and toggle theme.
+- Open a file, switch tabs, select records, and set compare baseline while confirming the loading overlay appears and clears.
+- Drag left and right pane dividers, restart the app, and confirm widths persist.
+- Run `npm run build`, `cd src-tauri && cargo fmt --check && cargo test`, and `npm run tauri -- build`.
+- Confirm local Linux bundle output remains `deb` and `rpm`.
+- Confirm GitHub Actions workflow uses platform-specific bundle targets for macOS, Linux, and Windows.

@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.5.1 - Frosted UI & Packaging
+
+### Added
+
+- Frosted glass macOS-inspired visual refresh with transparent custom window chrome.
+- Custom title bar with close, minimize, maximize, drag, double-click maximize, and theme controls.
+- Resizable left and right workspace panes with persisted panel widths.
+- Loading overlay for full-file scans, tab switching, record loading, and compare baseline loading.
+- GitHub Actions build workflow for macOS arm64/x64, Linux x64, and Windows x64 artifacts.
+
+### Changed
+
+- Right-panel navigation now uses compact icon tabs with tooltips.
+- Local Tauri bundle defaults remain Linux `deb`/`rpm`; CI passes platform-specific bundle targets for macOS and Windows.
+
+### Known Limits
+
+- Cross-platform packages are validated by CI configuration; local release validation still runs on the host platform.
+- The frosted transparent shell depends on OS compositor support.
+
 ## v0.5.0 - Raw Data & Trace Intelligence
 
 ### Added

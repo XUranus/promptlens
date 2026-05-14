@@ -4,7 +4,7 @@ PromptLens is a local-first desktop viewer for JSONL LLM audit logs. It focuses 
 
 ## Current Status
 
-Implemented v0.5 raw data and trace intelligence foundation:
+Implemented v0.5.1 raw data, trace intelligence, and frosted UI foundation:
 
 - Tauri + Rust + React + TypeScript desktop app
 - Local JSONL file opening
@@ -40,6 +40,10 @@ Implemented v0.5 raw data and trace intelligence foundation:
 - Local export for filtered summaries as JSONL/CSV and Markdown analysis reports
 - Streamed raw JSONL, normalized JSONL, and session Markdown export from source files
 - Provider, model, and issue-only advanced filters
+- Frosted glass visual refresh with custom transparent window chrome
+- Resizable workspace panes with persisted panel widths
+- Loading overlays for scans, tab switches, record loads, and compare loads
+- GitHub Actions workflow for macOS, Linux, and Windows build artifacts
 
 ## Development
 
@@ -75,6 +79,7 @@ npm run tauri:dev
 10. When an active file grows on disk, use `Load appended records` to add new rows without rescanning the full file.
 11. Use Sessions, Analytics, Issues, and Export tabs to summarize local audit data.
 12. Use Trace and advanced filters to isolate linked calls or high-signal problem records.
+13. Drag the pane dividers to tune the list/detail/debug layout for your screen.
 
 Build the frontend:
 
