@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CacheInfo, FileScanResult, FileStatus, RecordDetail, SearchResponse } from "./types";
+import type {
+  CacheInfo,
+  FileScanResult,
+  FileStatus,
+  IncrementalScanResult,
+  RecordDetail,
+  SearchResponse,
+} from "./types";
 
 export async function openFileDialog(): Promise<string | null> {
   return invoke("open_file_dialog");
@@ -7,6 +14,14 @@ export async function openFileDialog(): Promise<string | null> {
 
 export async function scanJsonl(filePath: string): Promise<FileScanResult> {
   return invoke("scan_jsonl", { filePath });
+}
+
+export async function scanJsonlIncremental(
+  filePath: string,
+  fromOffset: number,
+  fromLineNumber: number,
+): Promise<IncrementalScanResult> {
+  return invoke("scan_jsonl_incremental", { filePath, fromOffset, fromLineNumber });
 }
 
 export async function cancelScan(): Promise<void> {

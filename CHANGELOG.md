@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.3.2 - Incremental Indexing
+
+### Added
+
+- Append-only JSONL loading for active files that grow on disk.
+- Newly appended record markers in the call list.
+- SQLite FTS5 search index with indexed search status in the UI.
+- Incremental cache and search index updates after appended records are loaded.
+- Unit coverage for incremental scanning and indexed search.
+
+### Changed
+
+- Full scans now refresh both summary cache and search index.
+- File search prefers the FTS index and falls back to streaming search when the index has no match.
+- Cache schema upgraded to version 2 and resets stale scan/search cache tables.
+
+### Known Limits
+
+- Incremental loading is intended for append-only writes; rewritten or truncated files still require a full rescan.
+- Indexed search is exact-token oriented through SQLite FTS, so substring-style misses fall back to streaming search.
+
 ## v0.3.1 - Workspace Stabilization
 
 ### Added
@@ -19,7 +40,7 @@
 ### Known Limits
 
 - Workspace restore reopens files by path and depends on the original files still existing.
-- File change detection currently warns and asks for manual rescan; append-only incremental scanning is still future work.
+- Rewritten or truncated file changes still require manual rescan.
 
 ## v0.3.0 - Local Workspace Foundation
 

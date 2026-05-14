@@ -31,6 +31,7 @@ import {
   openFileDialog,
   readRecord,
   scanJsonl,
+  scanJsonlIncremental,
   searchJsonl,
 } from "../tauri";
 import type {
@@ -61,6 +62,8 @@ type WorkspaceTab = {
   compareBase: RecordDetail | null;
   searchTerm: string;
   searchResults: SearchResult[];
+  lastSearchIndexed: boolean | null;
+  newLineNumbers: number[];
   lastScanMs: number | null;
   lastSearchMs: number | null;
 };
@@ -92,6 +95,8 @@ export function App() {
   const compareBase = activeTab?.compareBase ?? null;
   const searchTerm = activeTab?.searchTerm ?? "";
   const searchResults = activeTab?.searchResults ?? [];
+  const lastSearchIndexed = activeTab?.lastSearchIndexed ?? null;
+  const newLineNumbers = activeTab?.newLineNumbers ?? [];
   const lastScanMs = activeTab?.lastScanMs ?? null;
   const lastSearchMs = activeTab?.lastSearchMs ?? null;
 
@@ -130,6 +135,8 @@ export function App() {
       compareBase: null,
       searchTerm: "",
       searchResults: [],
+      lastSearchIndexed: null,
+      newLineNumbers: [],
       lastScanMs: result.durationMs,
       lastSearchMs: null,
     };
@@ -252,7 +259,11 @@ export function App() {
 
   async function handleSelect(summary: LogSummary) {
     if (!file) return;
-    updateActiveTab({ selected: summary, detail: null });
+    updateActiveTab({
+      selected: summary,
+      detail: null,
+      newLineNumbers: newLineNumbers.filter((lineNumber) => lineNumber !== summary.lineNumber),
+    });
     try {
       updateActiveTab({ detail: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
     } catch (err) {
@@ -274,11 +285,15 @@ export function App() {
     if (!file || !searchTerm.trim()) return;
     setSearching(true);
     setSearchProgress(null);
-    updateActiveTab({ lastSearchMs: null });
+    updateActiveTab({ lastSearchMs: null, lastSearchIndexed: null });
     setError(null);
     try {
       const response = await searchJsonl(file.filePath, searchTerm);
-      updateActiveTab({ searchResults: response.results, lastSearchMs: response.durationMs });
+      updateActiveTab({
+        searchResults: response.results,
+        lastSearchMs: response.durationMs,
+        lastSearchIndexed: response.indexed,
+      });
       if (response.truncated) {
         setError("Search stopped after 1,000 matches. Refine the query to narrow results.");
       }
@@ -296,6 +311,38 @@ export function App() {
   async function handleRescan() {
     if (!file) return;
     await loadFile(file.filePath);
+  }
+
+  async function handleLoadAppendedRecords() {
+    if (!file) return;
+    setLoading(true);
+    setScanProgress(null);
+    setError(null);
+    try {
+      const result = await scanJsonlIncremental(file.filePath, file.fileSize, file.totalLines);
+      const appendedLines = result.summaries.map((summary) => summary.lineNumber);
+      updateActiveTab({
+        file: {
+          ...file,
+          fileSize: result.fileSize,
+          modified: result.modified,
+          totalLines: result.nextLineNumber,
+          validRecords: file.validRecords + result.validRecords,
+          invalidRecords: file.invalidRecords + result.invalidRecords,
+          durationMs: result.durationMs,
+          cacheHit: false,
+          summaries: [...file.summaries, ...result.summaries],
+        },
+        lastScanMs: result.durationMs,
+        newLineNumbers: [...newLineNumbers, ...appendedLines],
+      });
+      setFileStatus({ exists: true, fileSize: result.fileSize, modified: result.modified });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+      setScanProgress(null);
+    }
   }
 
   async function handleClearCache() {
@@ -336,6 +383,15 @@ export function App() {
       void handleSelect(next);
     }
   }
+
+  const hasDiskChange =
+    Boolean(file && fileStatus) &&
+    (!fileStatus?.exists || fileStatus.fileSize !== file?.fileSize || fileStatus.modified !== file?.modified);
+  const hasAppendOnlyChange =
+    file !== null &&
+    fileStatus?.exists === true &&
+    fileStatus.fileSize !== undefined &&
+    fileStatus.fileSize > file.fileSize;
 
   return (
     <main className="app-shell">
@@ -404,9 +460,18 @@ export function App() {
       </header>
 
       {error ? <div className="error-banner">{error}</div> : null}
-      {file && fileStatus && (!fileStatus.exists || fileStatus.fileSize !== file.fileSize || fileStatus.modified !== file.modified) ? (
+      {hasDiskChange ? (
         <div className="warning-banner">
-          Active file changed on disk. Rescan to refresh summaries.
+          <span>
+            {hasAppendOnlyChange
+              ? "Active file has appended records on disk."
+              : "Active file changed on disk. Rescan to refresh summaries."}
+          </span>
+          {hasAppendOnlyChange ? (
+            <button onClick={handleLoadAppendedRecords} disabled={loading}>
+              Load appended records
+            </button>
+          ) : null}
         </div>
       ) : null}
       {loading || searching || lastScanMs !== null || lastSearchMs !== null ? (
@@ -430,7 +495,13 @@ export function App() {
         <aside className="list-pane">
           <FileHeader file={file} count={filtered.length} />
           {file ? (
-            <LogList items={filtered} selected={selected} onSelect={handleSelect} onCompare={handleSetCompare} />
+            <LogList
+              items={filtered}
+              selected={selected}
+              newLineNumbers={newLineNumbers}
+              onSelect={handleSelect}
+              onCompare={handleSetCompare}
+            />
           ) : (
             <div className="empty-state">Open a JSONL audit log to inspect LLM calls locally.</div>
           )}
@@ -451,6 +522,7 @@ export function App() {
             setSearchTerm={(term) => updateActiveTab({ searchTerm: term })}
             searching={searching}
             searchResults={searchResults}
+            lastSearchIndexed={lastSearchIndexed}
             onSearch={handleSearch}
             onJump={jumpToResult}
             onClearCompare={() => updateActiveTab({ compareBase: null })}
@@ -567,15 +639,18 @@ function WorkspaceTabs({
 function LogList({
   items,
   selected,
+  newLineNumbers,
   onSelect,
   onCompare,
 }: {
   items: LogSummary[];
   selected: LogSummary | null;
+  newLineNumbers: number[];
   onSelect: (summary: LogSummary) => void;
   onCompare: (summary: LogSummary) => void;
 }) {
   const parentRef = useRef<HTMLDivElement | null>(null);
+  const newLineSet = useMemo(() => new Set(newLineNumbers), [newLineNumbers]);
   const rowVirtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => parentRef.current,
@@ -588,15 +663,17 @@ function LogList({
       <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative" }}>
         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
           const item = items[virtualRow.index];
+          const isNew = newLineSet.has(item.lineNumber);
           return (
             <button
               key={`${item.id}-${item.lineNumber}`}
-              className={`log-row ${selected?.lineNumber === item.lineNumber ? "selected" : ""}`}
+              className={`log-row ${selected?.lineNumber === item.lineNumber ? "selected" : ""} ${isNew ? "new-record" : ""}`}
               onClick={() => onSelect(item)}
               style={{ transform: `translateY(${virtualRow.start}px)` }}
             >
               <div className="row-top">
                 <span className={`status-dot ${item.status}`} />
+                {isNew ? <span className="new-badge">New</span> : null}
                 <span className="model">{item.model || "unknown model"}</span>
                 <span className="time">{formatTime(item.timestamp)}</span>
               </div>
@@ -756,6 +833,7 @@ function RightPanel({
   setSearchTerm,
   searching,
   searchResults,
+  lastSearchIndexed,
   onSearch,
   onJump,
   onClearCompare,
@@ -769,6 +847,7 @@ function RightPanel({
   setSearchTerm: (term: string) => void;
   searching: boolean;
   searchResults: SearchResult[];
+  lastSearchIndexed: boolean | null;
   onSearch: () => void;
   onJump: (result: SearchResult) => void;
   onClearCompare: () => void;
@@ -810,6 +889,7 @@ function RightPanel({
           setTerm={setSearchTerm}
           searching={searching}
           results={searchResults}
+          indexed={lastSearchIndexed}
           onSearch={onSearch}
           onJump={onJump}
         />
@@ -1125,6 +1205,7 @@ function SearchPanel({
   setTerm,
   searching,
   results,
+  indexed,
   onSearch,
   onJump,
 }: {
@@ -1132,6 +1213,7 @@ function SearchPanel({
   setTerm: (term: string) => void;
   searching: boolean;
   results: SearchResult[];
+  indexed: boolean | null;
   onSearch: () => void;
   onJump: (result: SearchResult) => void;
 }) {
@@ -1149,7 +1231,10 @@ function SearchPanel({
           {searching ? "Searching" : "Search"}
         </button>
       </div>
-      <div className="search-count">{results.length.toLocaleString()} matches</div>
+      <div className="search-count">
+        <span>{results.length.toLocaleString()} matches</span>
+        {indexed !== null ? <span>{indexed ? "Indexed" : "Streaming"} search</span> : null}
+      </div>
       <div className="search-results">
         {results.map((result) => (
           <button key={`${result.lineNumber}-${result.byteOffset}`} onClick={() => onJump(result)}>

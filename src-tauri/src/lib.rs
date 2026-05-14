@@ -16,7 +16,7 @@ use std::{
 use tauri::{AppHandle, Emitter, State};
 
 const MAX_SEARCH_RESULTS: usize = 1000;
-const CACHE_SCHEMA_VERSION: i64 = 1;
+const CACHE_SCHEMA_VERSION: i64 = 2;
 
 struct AppState {
     cancel_scan: AtomicBool,
@@ -91,6 +91,19 @@ struct SearchResponse {
     results: Vec<SearchResult>,
     truncated: bool,
     cancelled: bool,
+    duration_ms: u128,
+    indexed: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct IncrementalScanResult {
+    summaries: Vec<LogSummary>,
+    file_size: u64,
+    modified: Option<String>,
+    next_line_number: usize,
+    valid_records: usize,
+    invalid_records: usize,
     duration_ms: u128,
 }
 
@@ -381,8 +394,112 @@ fn scan_jsonl_inner(
     };
     if !result.cancelled {
         let _ = write_scan_cache(&result);
+        let _ = write_search_index_from_file(&result.file_path);
     }
     Ok(result)
+}
+
+#[tauri::command]
+fn scan_jsonl_incremental(
+    file_path: String,
+    from_offset: u64,
+    from_line_number: usize,
+) -> Result<IncrementalScanResult, String> {
+    let started = Instant::now();
+    let metadata =
+        fs::metadata(&file_path).map_err(|err| format!("Failed to read metadata: {err}"))?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs().to_string());
+    if metadata.len() < from_offset {
+        return Err("File appears to have been truncated. Run a full rescan.".to_string());
+    }
+
+    let file = File::open(&file_path).map_err(|err| format!("Failed to open file: {err}"))?;
+    let mut reader = BufReader::new(file);
+    reader
+        .seek(SeekFrom::Start(from_offset))
+        .map_err(|err| format!("Failed to seek append offset: {err}"))?;
+
+    let mut line = String::new();
+    let mut byte_offset = from_offset;
+    let mut line_number = from_line_number;
+    let mut summaries = Vec::new();
+    let mut valid_records = 0usize;
+    let mut invalid_records = 0usize;
+
+    loop {
+        line.clear();
+        let bytes_read = reader
+            .read_line(&mut line)
+            .map_err(|err| format!("Failed to read appended line: {err}"))?;
+        if bytes_read == 0 {
+            break;
+        }
+        line_number += 1;
+        let current_offset = byte_offset;
+        byte_offset += bytes_read as u64;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => {
+                valid_records += 1;
+                summaries.push(summary_from_value(
+                    &value,
+                    line_number,
+                    current_offset,
+                    None,
+                ));
+            }
+            Err(err) => {
+                invalid_records += 1;
+                summaries.push(LogSummary {
+                    id: format!("line-{line_number}"),
+                    line_number,
+                    byte_offset: current_offset,
+                    timestamp: None,
+                    provider: None,
+                    model: None,
+                    status: "invalid_json".to_string(),
+                    latency_ms: None,
+                    prompt_tokens: None,
+                    completion_tokens: None,
+                    total_tokens: None,
+                    has_image: false,
+                    has_tool_call: false,
+                    preview: Some(trimmed.chars().take(180).collect()),
+                    parse_error: Some(err.to_string()),
+                });
+            }
+        }
+    }
+
+    append_search_index_from_file(&file_path, from_offset, from_line_number)?;
+    let _ = append_scan_cache(
+        &file_path,
+        from_offset,
+        metadata.len(),
+        modified.clone(),
+        &summaries,
+        line_number,
+        valid_records,
+        invalid_records,
+        started.elapsed().as_millis(),
+    );
+
+    Ok(IncrementalScanResult {
+        summaries,
+        file_size: metadata.len(),
+        modified,
+        next_line_number: line_number,
+        valid_records,
+        invalid_records,
+        duration_ms: started.elapsed().as_millis(),
+    })
 }
 
 fn cache_db_path() -> Result<std::path::PathBuf, String> {
@@ -406,6 +523,8 @@ fn open_cache() -> Result<Connection, String> {
     if version != 0 && version != CACHE_SCHEMA_VERSION {
         conn.execute("DROP TABLE IF EXISTS scan_cache", [])
             .map_err(|err| format!("Failed to reset old cache: {err}"))?;
+        conn.execute("DROP TABLE IF EXISTS search_index", [])
+            .map_err(|err| format!("Failed to reset old search index: {err}"))?;
     }
     conn.execute(
         "CREATE TABLE IF NOT EXISTS scan_cache (
@@ -418,9 +537,86 @@ fn open_cache() -> Result<Connection, String> {
         [],
     )
     .map_err(|err| format!("Failed to initialize cache: {err}"))?;
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
+            file_path UNINDEXED,
+            line_number UNINDEXED,
+            byte_offset UNINDEXED,
+            content
+        )",
+        [],
+    )
+    .map_err(|err| format!("Failed to initialize search index: {err}"))?;
     conn.pragma_update(None, "user_version", CACHE_SCHEMA_VERSION)
         .map_err(|err| format!("Failed to update cache schema version: {err}"))?;
     Ok(conn)
+}
+
+fn write_search_index_from_file(file_path: &str) -> Result<(), String> {
+    let conn = open_cache()?;
+    conn.execute(
+        "DELETE FROM search_index WHERE file_path = ?1",
+        params![file_path],
+    )
+    .map_err(|err| format!("Failed to clear search index: {err}"))?;
+    index_file_from_offset(&conn, file_path, 0, 0)
+}
+
+fn append_search_index_from_file(
+    file_path: &str,
+    from_offset: u64,
+    from_line_number: usize,
+) -> Result<(), String> {
+    let conn = open_cache()?;
+    conn.execute(
+        "DELETE FROM search_index WHERE file_path = ?1 AND byte_offset >= ?2",
+        params![file_path, from_offset as i64],
+    )
+    .map_err(|err| format!("Failed to clear appended search index: {err}"))?;
+    index_file_from_offset(&conn, file_path, from_offset, from_line_number)
+}
+
+fn index_file_from_offset(
+    conn: &Connection,
+    file_path: &str,
+    from_offset: u64,
+    from_line_number: usize,
+) -> Result<(), String> {
+    let file = File::open(file_path).map_err(|err| format!("Failed to index file: {err}"))?;
+    let mut reader = BufReader::new(file);
+    reader
+        .seek(SeekFrom::Start(from_offset))
+        .map_err(|err| format!("Failed to seek search index: {err}"))?;
+    let mut line = String::new();
+    let mut byte_offset = from_offset;
+    let mut line_number = from_line_number;
+    loop {
+        line.clear();
+        let bytes_read = reader
+            .read_line(&mut line)
+            .map_err(|err| format!("Failed to index line: {err}"))?;
+        if bytes_read == 0 {
+            break;
+        }
+        line_number += 1;
+        let current_offset = byte_offset;
+        byte_offset += bytes_read as u64;
+        let content = line.trim();
+        if !content.is_empty() {
+            conn.execute(
+                "INSERT INTO search_index (file_path, line_number, byte_offset, content)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    file_path,
+                    line_number as i64,
+                    current_offset as i64,
+                    content
+                ],
+            )
+            .map_err(|err| format!("Failed to write search index: {err}"))?;
+        }
+    }
+    Ok(())
 }
 
 fn read_scan_cache(
@@ -473,6 +669,46 @@ fn write_scan_cache(result: &FileScanResult) -> Result<(), String> {
     )
     .map_err(|err| format!("Failed to write cache: {err}"))?;
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_scan_cache(
+    file_path: &str,
+    from_offset: u64,
+    file_size: u64,
+    modified: Option<String>,
+    summaries: &[LogSummary],
+    total_lines: usize,
+    valid_records: usize,
+    invalid_records: usize,
+    duration_ms: u128,
+) -> Result<(), String> {
+    let payload = {
+        let conn = open_cache()?;
+        let mut stmt = conn
+            .prepare("SELECT payload FROM scan_cache WHERE file_path = ?1")
+            .map_err(|err| format!("Failed to read cache: {err}"))?;
+        stmt.query_row(params![file_path], |row| row.get::<_, String>(0))
+            .ok()
+    };
+    let Some(payload) = payload else {
+        return Ok(());
+    };
+    let mut cached = serde_json::from_str::<FileScanResult>(&payload)
+        .map_err(|err| format!("Failed to parse cache: {err}"))?;
+    if cached.file_size != from_offset {
+        return Ok(());
+    }
+    cached.file_size = file_size;
+    cached.modified = modified;
+    cached.total_lines = total_lines;
+    cached.valid_records += valid_records;
+    cached.invalid_records += invalid_records;
+    cached.duration_ms = duration_ms;
+    cached.cancelled = false;
+    cached.cache_hit = false;
+    cached.summaries.extend_from_slice(summaries);
+    write_scan_cache(&cached)
 }
 
 #[tauri::command]
@@ -559,7 +795,12 @@ fn search_jsonl_inner(
             truncated: false,
             cancelled: false,
             duration_ms: 0,
+            indexed: false,
         });
+    }
+
+    if let Ok(Some(indexed)) = search_indexed(&file_path, &needle, started) {
+        return Ok(indexed);
     }
 
     let file = File::open(&file_path).map_err(|err| format!("Failed to open file: {err}"))?;
@@ -630,7 +871,66 @@ fn search_jsonl_inner(
         truncated,
         cancelled,
         duration_ms: started.elapsed().as_millis(),
+        indexed: false,
     })
+}
+
+fn search_indexed(
+    file_path: &str,
+    query: &str,
+    started: Instant,
+) -> Result<Option<SearchResponse>, String> {
+    let conn = open_cache()?;
+    let phrase = format!("\"{}\"", query.replace('"', "\"\""));
+    let mut stmt = conn
+        .prepare(
+            "SELECT line_number, byte_offset, substr(content, 1, 240)
+             FROM search_index
+             WHERE file_path = ?1 AND content MATCH ?2
+             LIMIT ?3",
+        )
+        .map_err(|err| format!("Failed to prepare indexed search: {err}"))?;
+    let mut rows = stmt
+        .query(params![file_path, phrase, (MAX_SEARCH_RESULTS + 1) as i64])
+        .map_err(|err| format!("Failed to query indexed search: {err}"))?;
+    let mut results = Vec::new();
+    while let Some(row) = rows
+        .next()
+        .map_err(|err| format!("Failed to read indexed search: {err}"))?
+    {
+        if results.len() >= MAX_SEARCH_RESULTS {
+            return Ok(Some(SearchResponse {
+                results,
+                truncated: true,
+                cancelled: false,
+                duration_ms: started.elapsed().as_millis(),
+                indexed: true,
+            }));
+        }
+        results.push(SearchResult {
+            line_number: row
+                .get::<_, i64>(0)
+                .map_err(|err| format!("Failed to read indexed line: {err}"))?
+                as usize,
+            byte_offset: row
+                .get::<_, i64>(1)
+                .map_err(|err| format!("Failed to read indexed offset: {err}"))?
+                as u64,
+            context: row
+                .get::<_, String>(2)
+                .map_err(|err| format!("Failed to read indexed context: {err}"))?,
+        });
+    }
+    if results.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(SearchResponse {
+        results,
+        truncated: false,
+        cancelled: false,
+        duration_ms: started.elapsed().as_millis(),
+        indexed: true,
+    }))
 }
 
 fn summary_from_value(
@@ -1154,6 +1454,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_file_dialog,
             scan_jsonl,
+            scan_jsonl_incremental,
             cancel_scan,
             clear_scan_cache,
             get_cache_info,
@@ -1171,11 +1472,17 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::io::Write;
+    use std::sync::Mutex;
     use tempfile::NamedTempFile;
+
+    static TEST_CACHE_ENV: Mutex<()> = Mutex::new(());
 
     #[test]
     fn scan_jsonl_tracks_offsets_and_invalid_lines() {
+        let _guard = TEST_CACHE_ENV.lock().unwrap();
         let mut file = NamedTempFile::new().expect("temp file");
+        let cache_file = NamedTempFile::new().expect("cache file");
+        std::env::set_var("PROMPTLENS_CACHE_PATH", cache_file.path());
         writeln!(
             file,
             "{}",
@@ -1204,6 +1511,7 @@ mod tests {
         assert_eq!(result.summaries[0].total_tokens, Some(3));
         assert_eq!(result.summaries[1].status, "invalid_json");
         assert!(result.summaries[1].byte_offset > 0);
+        std::env::remove_var("PROMPTLENS_CACHE_PATH");
     }
 
     #[test]
@@ -1278,7 +1586,10 @@ mod tests {
 
     #[test]
     fn search_limits_results() {
+        let _guard = TEST_CACHE_ENV.lock().unwrap();
         let mut file = NamedTempFile::new().expect("temp file");
+        let cache_file = NamedTempFile::new().expect("cache file");
+        std::env::set_var("PROMPTLENS_CACHE_PATH", cache_file.path());
         for index in 0..(MAX_SEARCH_RESULTS + 10) {
             writeln!(file, "{{\"line\": {index}, \"text\": \"needle\"}}").unwrap();
         }
@@ -1292,10 +1603,48 @@ mod tests {
         .unwrap();
         assert_eq!(response.results.len(), MAX_SEARCH_RESULTS);
         assert!(response.truncated);
+        std::env::remove_var("PROMPTLENS_CACHE_PATH");
+    }
+
+    #[test]
+    fn incremental_scan_appends_summaries_and_search_index() {
+        let _guard = TEST_CACHE_ENV.lock().unwrap();
+        let mut file = NamedTempFile::new().expect("temp file");
+        let cache_file = NamedTempFile::new().expect("cache file");
+        std::env::set_var("PROMPTLENS_CACHE_PATH", cache_file.path());
+        writeln!(
+            file,
+            "{{\"id\":\"first\",\"model\":\"gpt-4.1\",\"text\":\"alpha\"}}"
+        )
+        .unwrap();
+        let path = file.path().to_string_lossy().to_string();
+        let first = scan_jsonl_inner(path.clone(), None, None).unwrap();
+        let append_offset = first.file_size;
+        writeln!(
+            file,
+            "{{\"id\":\"second\",\"model\":\"gpt-4.1\",\"text\":\"beta needle\"}}"
+        )
+        .unwrap();
+
+        let appended =
+            scan_jsonl_incremental(path.clone(), append_offset, first.total_lines).unwrap();
+        assert_eq!(appended.summaries.len(), 1);
+        assert_eq!(appended.summaries[0].line_number, 2);
+        assert_eq!(appended.next_line_number, 2);
+
+        let response = search_jsonl_inner(path, "needle".to_string(), None, None).unwrap();
+        assert!(response.indexed);
+        assert_eq!(response.results[0].line_number, 2);
+        let cached =
+            scan_jsonl_inner(file.path().to_string_lossy().to_string(), None, None).unwrap();
+        assert!(cached.cache_hit);
+        assert_eq!(cached.summaries.len(), 2);
+        std::env::remove_var("PROMPTLENS_CACHE_PATH");
     }
 
     #[test]
     fn scan_cache_round_trips_valid_scan() {
+        let _guard = TEST_CACHE_ENV.lock().unwrap();
         let mut file = NamedTempFile::new().expect("temp file");
         let cache_file = NamedTempFile::new().expect("cache file");
         std::env::set_var("PROMPTLENS_CACHE_PATH", cache_file.path());

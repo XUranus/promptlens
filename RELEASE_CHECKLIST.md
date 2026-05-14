@@ -50,3 +50,12 @@ Current Linux bundle targets are `deb` and `rpm`. AppImage should be re-enabled 
 - Use the database toolbar button and verify cache is cleared.
 - Modify the active JSONL file externally and verify the rescan warning appears.
 - Confirm cache failures fall back to cold scan.
+
+## v0.3.2 Incremental Indexing
+
+- Open a JSONL file, append valid JSONL rows externally, and verify `Load appended records` appears.
+- Load appended records and verify new rows are marked in the call list.
+- Select an appended row and verify its raw/detail payload loads by byte offset.
+- Search for text from an indexed row and verify the Search panel reports indexed search.
+- Search for a substring that misses FTS token matching and verify streaming fallback still returns matches.
+- Truncate or rewrite the active file and verify the UI asks for a full rescan.

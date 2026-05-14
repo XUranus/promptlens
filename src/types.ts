@@ -32,6 +32,16 @@ export type FileScanResult = {
   summaries: LogSummary[];
 };
 
+export type IncrementalScanResult = {
+  summaries: LogSummary[];
+  fileSize: number;
+  modified?: string;
+  nextLineNumber: number;
+  validRecords: number;
+  invalidRecords: number;
+  durationMs: number;
+};
+
 export type NormalizedContent =
   | { type: "text"; text: string }
   | { type: "image"; mime?: string; dataUrl?: string; base64?: string }
@@ -98,6 +108,7 @@ export type SearchResponse = {
   truncated: boolean;
   cancelled: boolean;
   durationMs: number;
+  indexed: boolean;
 };
 
 export type ProgressEvent = {

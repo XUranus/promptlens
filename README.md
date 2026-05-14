@@ -4,7 +4,7 @@ PromptLens is a local-first desktop viewer for JSONL LLM audit logs. It focuses 
 
 ## Current Status
 
-Implemented v0.3 local workspace foundation:
+Implemented v0.3 local workspace and incremental indexing foundation:
 
 - Tauri + Rust + React + TypeScript desktop app
 - Local JSONL file opening
@@ -18,7 +18,7 @@ Implemented v0.3 local workspace foundation:
 - data URL/base64 image thumbnail and preview modal
 - Metadata panel
 - Read-only JSON Tree with large string truncation
-- Full-file streaming string search
+- Full-file search with FTS index acceleration and streaming fallback
 - List filtering, threshold filters, and sorting
 - Recent files, theme toggle, and basic shortcuts
 - Two-record diff baseline flow
@@ -30,6 +30,8 @@ Implemented v0.3 local workspace foundation:
 - Workspace tabs restore on app startup when source files still exist
 - Cache can be cleared from the toolbar
 - Active file changes on disk are detected and surfaced as a rescan warning
+- Append-only file changes can be loaded incrementally without a full rescan
+- Newly appended records are marked in the call list until selected
 
 ## Development
 
@@ -61,7 +63,8 @@ npm run tauri:dev
 6. Use the compare icon in the list to set a diff baseline, then select another record.
 7. Use scan/search cancel buttons when working with large files.
 8. Open multiple files to switch between workspace tabs without losing per-file state.
-9. Use the database button to clear the scan cache when needed.
+9. Use the database button to clear the scan and search cache when needed.
+10. When an active file grows on disk, use `Load appended records` to add new rows without rescanning the full file.
 
 Build the frontend:
 
@@ -103,7 +106,7 @@ Generate at least a target file size in MB:
 node scripts/generate-large-sample.mjs 100000 100
 ```
 
-The search command caps results at 1,000 matches so broad searches do not overload the UI on large files.
+The search command uses the local FTS index when available, falls back to streaming search when needed, and caps results at 1,000 matches so broad searches do not overload the UI on large files.
 
 ## Shortcuts
 
