@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.3.0 - Local Workspace Foundation
+
+### Added
+
+- Multi-file workspace tabs.
+- Per-file state for selected record, loaded detail, diff baseline, search term, search results, and scan/search durations.
+- Active file rescan control.
+- SQLite scan summary cache keyed by file path, file size, and modified timestamp.
+- Cache hit indicator in workspace tabs.
+- Cache round-trip unit test.
+
+### Changed
+
+- Generated and private JSONL files remain ignored by default; only `samples/basic.jsonl` is tracked.
+
+### Known Limits
+
+- SQLite cache stores scan summaries only; raw record reads still use the source JSONL file by byte offset.
+- Cache invalidation is based on file path, size, and modified time.
+- Workspace tabs are in-memory for this release; reopening the app starts with no tabs.
+
 ## v0.2.0 - Debugger Release Candidate
 
 ### Added

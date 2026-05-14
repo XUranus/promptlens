@@ -34,3 +34,11 @@ Before tagging a release:
 Tauri on Linux requires the WebKit/GTK stack installed by the host distribution. If the app compiles but fails to launch, verify WebKitGTK, GTK, and common desktop portal packages are installed.
 
 Current Linux bundle targets are `deb` and `rpm`. AppImage should be re-enabled after validating the linuxdeploy toolchain in the release environment.
+
+## v0.3.0 Workspace Readiness
+
+- Open two different JSONL files and verify both appear as tabs.
+- Switch tabs and verify each file keeps selected record, search results, and diff baseline.
+- Reopen an unchanged file and verify the tab shows `cache`.
+- Click rescan and verify the active file reloads.
+- Delete `.promptlens-cache.sqlite` when testing cold scan behavior.

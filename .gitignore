@@ -23,6 +23,8 @@ pnpm-debug.log*
 # Local env
 .env
 .env.*
+.promptlens-cache.sqlite
+.promptlens-cache.sqlite-*
 
 # Generated or local log samples
 samples/*.jsonl

@@ -28,6 +28,7 @@ export type FileScanResult = {
   invalidRecords: number;
   durationMs: number;
   cancelled: boolean;
+  cacheHit: boolean;
   summaries: LogSummary[];
 };
 

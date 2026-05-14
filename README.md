@@ -4,7 +4,7 @@ PromptLens is a local-first desktop viewer for JSONL LLM audit logs. It focuses 
 
 ## Current Status
 
-Implemented v0.2 debugger foundation:
+Implemented v0.3 local workspace foundation:
 
 - Tauri + Rust + React + TypeScript desktop app
 - Local JSONL file opening
@@ -25,6 +25,8 @@ Implemented v0.2 debugger foundation:
 - Tool, Error, and Raw payload debugger panels
 - Scan/search progress, duration display, and cancellation
 - Provider fixtures and Rust tests for OpenAI, Anthropic, Gemini, and Ollama-style payloads
+- Multi-file workspace tabs with independent selection, detail, search, diff baseline, and timing state
+- SQLite summary cache for faster repeated opens when file path, size, and modified time are unchanged
 
 ## Development
 
@@ -55,6 +57,7 @@ npm run tauri:dev
 5. Use the right panel tabs for metadata, diff, tools, errors, raw payloads, JSON Tree, and search.
 6. Use the compare icon in the list to set a diff baseline, then select another record.
 7. Use scan/search cancel buttons when working with large files.
+8. Open multiple files to switch between workspace tabs without losing per-file state.
 
 Build the frontend:
 

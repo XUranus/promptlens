@@ -10,6 +10,7 @@ import {
   GitCompare,
   Image,
   Moon,
+  RotateCw,
   Search,
   Sun,
   Wrench,
@@ -38,29 +39,44 @@ type Theme = "dark" | "light";
 
 const THEME_KEY = "promptlens.theme";
 
+type WorkspaceTab = {
+  id: string;
+  file: FileScanResult;
+  selected: LogSummary | null;
+  detail: RecordDetail | null;
+  compareBase: RecordDetail | null;
+  searchTerm: string;
+  searchResults: SearchResult[];
+  lastScanMs: number | null;
+  lastSearchMs: number | null;
+};
+
 export function App() {
-  const [file, setFile] = useState<FileScanResult | null>(null);
-  const [selected, setSelected] = useState<LogSummary | null>(null);
-  const [detail, setDetail] = useState<RecordDetail | null>(null);
-  const [compareBase, setCompareBase] = useState<RecordDetail | null>(null);
+  const [tabs, setTabs] = useState<WorkspaceTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [sortKey, setSortKey] = useState<SortKey>("time");
   const [query, setQuery] = useState("");
   const [latencyMin, setLatencyMin] = useState("");
   const [tokensMin, setTokensMin] = useState("");
   const [rightTab, setRightTab] = useState<RightTab>("metadata");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [recentFiles, setRecentFiles] = useState<string[]>(() => loadRecentFiles());
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [scanProgress, setScanProgress] = useState<ProgressEvent | null>(null);
   const [searchProgress, setSearchProgress] = useState<ProgressEvent | null>(null);
-  const [lastScanMs, setLastScanMs] = useState<number | null>(null);
-  const [lastSearchMs, setLastSearchMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+  const file = activeTab?.file ?? null;
+  const selected = activeTab?.selected ?? null;
+  const detail = activeTab?.detail ?? null;
+  const compareBase = activeTab?.compareBase ?? null;
+  const searchTerm = activeTab?.searchTerm ?? "";
+  const searchResults = activeTab?.searchResults ?? [];
+  const lastScanMs = activeTab?.lastScanMs ?? null;
+  const lastSearchMs = activeTab?.lastSearchMs ?? null;
 
   const filtered = useMemo(() => {
     if (!file) return [];
@@ -82,6 +98,28 @@ export function App() {
       })
       .sort((a, b) => compareSummary(a, b, sortKey));
   }, [file, filter, latencyMin, query, sortKey, tokensMin]);
+
+  function updateActiveTab(patch: Partial<WorkspaceTab>) {
+    setTabs((current) => current.map((tab) => (tab.id === activeTabId ? { ...tab, ...patch } : tab)));
+  }
+
+  async function createTabFromScan(result: FileScanResult) {
+    const first = result.summaries[0] ?? null;
+    const newTab: WorkspaceTab = {
+      id: result.filePath,
+      file: result,
+      selected: first,
+      detail: first ? await readRecord(result.filePath, first.byteOffset, first.lineNumber) : null,
+      compareBase: null,
+      searchTerm: "",
+      searchResults: [],
+      lastScanMs: result.durationMs,
+      lastSearchMs: null,
+    };
+    setTabs((current) => [newTab, ...current.filter((tab) => tab.id !== newTab.id)]);
+    setActiveTabId(newTab.id);
+    return newTab;
+  }
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -134,21 +172,10 @@ export function App() {
     setError(null);
     setLoading(true);
     setScanProgress(null);
-    setLastScanMs(null);
-    setSelected(null);
-    setDetail(null);
-    setCompareBase(null);
-    setSearchResults([]);
     try {
       const result = await scanJsonl(path);
-      setLastScanMs(result.durationMs);
-      setFile(result);
       setRecentFiles(rememberRecentFile(result.filePath));
-      const first = result.summaries[0] ?? null;
-      setSelected(first);
-      if (first) {
-        setDetail(await readRecord(result.filePath, first.byteOffset, first.lineNumber));
-      }
+      await createTabFromScan(result);
       if (result.cancelled) {
         setError("Scan was cancelled. Partial results are shown.");
       }
@@ -167,10 +194,9 @@ export function App() {
 
   async function handleSelect(summary: LogSummary) {
     if (!file) return;
-    setSelected(summary);
-    setDetail(null);
+    updateActiveTab({ selected: summary, detail: null });
     try {
-      setDetail(await readRecord(file.filePath, summary.byteOffset, summary.lineNumber));
+      updateActiveTab({ detail: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -179,7 +205,7 @@ export function App() {
   async function handleSetCompare(summary: LogSummary) {
     if (!file) return;
     try {
-      setCompareBase(await readRecord(file.filePath, summary.byteOffset, summary.lineNumber));
+      updateActiveTab({ compareBase: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
       setRightTab("diff");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -190,12 +216,11 @@ export function App() {
     if (!file || !searchTerm.trim()) return;
     setSearching(true);
     setSearchProgress(null);
-    setLastSearchMs(null);
+    updateActiveTab({ lastSearchMs: null });
     setError(null);
     try {
       const response = await searchJsonl(file.filePath, searchTerm);
-      setSearchResults(response.results);
-      setLastSearchMs(response.durationMs);
+      updateActiveTab({ searchResults: response.results, lastSearchMs: response.durationMs });
       if (response.truncated) {
         setError("Search stopped after 1,000 matches. Refine the query to narrow results.");
       }
@@ -208,6 +233,21 @@ export function App() {
       setSearching(false);
       setSearchProgress(null);
     }
+  }
+
+  async function handleRescan() {
+    if (!file) return;
+    await loadFile(file.filePath);
+  }
+
+  function handleCloseTab(tabId: string) {
+    setTabs((current) => {
+      const next = current.filter((tab) => tab.id !== tabId);
+      if (activeTabId === tabId) {
+        setActiveTabId(next[0]?.id ?? null);
+      }
+      return next;
+    });
   }
 
   async function jumpToResult(result: SearchResult) {
@@ -256,6 +296,9 @@ export function App() {
             </option>
           ))}
         </select>
+        <button className="icon-button" onClick={handleRescan} disabled={!file || loading} title="Rescan active file">
+          <RotateCw size={16} />
+        </button>
         <div className="search-box">
           <Search size={15} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter list" />
@@ -307,6 +350,10 @@ export function App() {
         />
       ) : null}
 
+      {tabs.length > 0 ? (
+        <WorkspaceTabs tabs={tabs} activeTabId={activeTabId} onActivate={setActiveTabId} onClose={handleCloseTab} />
+      ) : null}
+
       <section className="workspace">
         <aside className="list-pane">
           <FileHeader file={file} count={filtered.length} />
@@ -329,12 +376,12 @@ export function App() {
             compareBase={compareBase}
             file={file}
             searchTerm={searchTerm}
-            setSearchTerm={setSearchTerm}
+            setSearchTerm={(term) => updateActiveTab({ searchTerm: term })}
             searching={searching}
             searchResults={searchResults}
             onSearch={handleSearch}
             onJump={jumpToResult}
-            onClearCompare={() => setCompareBase(null)}
+            onClearCompare={() => updateActiveTab({ compareBase: null })}
           />
         </aside>
       </section>
@@ -405,6 +452,42 @@ function ProgressStrip({
       <span>{label}</span>
       {loading ? <button onClick={onCancelScan}>Cancel scan</button> : null}
       {searching ? <button onClick={onCancelSearch}>Cancel search</button> : null}
+    </div>
+  );
+}
+
+function WorkspaceTabs({
+  tabs,
+  activeTabId,
+  onActivate,
+  onClose,
+}: {
+  tabs: WorkspaceTab[];
+  activeTabId: string | null;
+  onActivate: (id: string) => void;
+  onClose: (id: string) => void;
+}) {
+  return (
+    <div className="workspace-tabs">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          className={tab.id === activeTabId ? "active" : ""}
+          onClick={() => onActivate(tab.id)}
+          title={tab.file.filePath}
+        >
+          <span>{tab.file.fileName}</span>
+          <small>{tab.file.cacheHit ? "cache" : `${tab.file.validRecords.toLocaleString()} rows`}</small>
+          <strong
+            onClick={(event) => {
+              event.stopPropagation();
+              onClose(tab.id);
+            }}
+          >
+            <X size={13} />
+          </strong>
+        </button>
+      ))}
     </div>
   );
 }

@@ -3,7 +3,8 @@ mod parser;
 
 use adapters::{detect_provider, normalize_role};
 use parser::image_detector::normalize_image_string;
-use serde::Serialize;
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     fs::{self, File},
@@ -30,7 +31,7 @@ impl Default for AppState {
     }
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct LogSummary {
     id: String,
@@ -50,7 +51,7 @@ struct LogSummary {
     parse_error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct FileScanResult {
     file_path: String,
@@ -62,10 +63,11 @@ struct FileScanResult {
     invalid_records: usize,
     duration_ms: u128,
     cancelled: bool,
+    cache_hit: bool,
     summaries: Vec<LogSummary>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RecordDetail {
     summary: LogSummary,
@@ -74,7 +76,7 @@ struct RecordDetail {
     parse_error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchResult {
     line_number: usize,
@@ -82,7 +84,7 @@ struct SearchResult {
     context: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchResponse {
     results: Vec<SearchResult>,
@@ -91,7 +93,7 @@ struct SearchResponse {
     duration_ms: u128,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ProgressEvent {
     processed_bytes: u64,
@@ -99,7 +101,7 @@ struct ProgressEvent {
     line_number: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NormalizedCall {
     id: String,
@@ -118,7 +120,7 @@ struct NormalizedCall {
     raw: Value,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Usage {
     prompt_tokens: Option<u64>,
@@ -126,14 +128,14 @@ struct Usage {
     total_tokens: Option<u64>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NormalizedPayload {
     messages: Option<Vec<NormalizedMessage>>,
     raw: Option<Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NormalizedResponse {
     text: Option<String>,
@@ -142,7 +144,7 @@ struct NormalizedResponse {
     raw: Option<Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NormalizedError {
     message: Option<String>,
@@ -151,7 +153,7 @@ struct NormalizedError {
     raw: Option<Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NormalizedMessage {
     role: String,
@@ -159,7 +161,7 @@ struct NormalizedMessage {
     raw: Option<Value>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum NormalizedContent {
     Text {
@@ -224,6 +226,13 @@ fn scan_jsonl_inner(
         .ok()
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_secs().to_string());
+
+    if let Some(mut cached) = read_scan_cache(&file_path, metadata.len(), modified.as_deref())? {
+        cached.duration_ms = started.elapsed().as_millis();
+        cached.cache_hit = true;
+        cached.cancelled = false;
+        return Ok(cached);
+    }
 
     let mut reader = BufReader::new(file);
     let mut summaries = Vec::new();
@@ -303,7 +312,7 @@ fn scan_jsonl_inner(
         }
     }
 
-    Ok(FileScanResult {
+    let result = FileScanResult {
         file_path,
         file_name,
         file_size: metadata.len(),
@@ -313,8 +322,88 @@ fn scan_jsonl_inner(
         invalid_records,
         duration_ms: started.elapsed().as_millis(),
         cancelled,
+        cache_hit: false,
         summaries,
-    })
+    };
+    if !result.cancelled {
+        let _ = write_scan_cache(&result);
+    }
+    Ok(result)
+}
+
+fn cache_db_path() -> Result<std::path::PathBuf, String> {
+    let base =
+        std::env::current_dir().map_err(|err| format!("Failed to resolve current dir: {err}"))?;
+    Ok(base.join(".promptlens-cache.sqlite"))
+}
+
+fn open_cache() -> Result<Connection, String> {
+    let conn =
+        Connection::open(cache_db_path()?).map_err(|err| format!("Failed to open cache: {err}"))?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS scan_cache (
+            file_path TEXT PRIMARY KEY,
+            file_size INTEGER NOT NULL,
+            modified TEXT,
+            payload TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )
+    .map_err(|err| format!("Failed to initialize cache: {err}"))?;
+    Ok(conn)
+}
+
+fn read_scan_cache(
+    file_path: &str,
+    file_size: u64,
+    modified: Option<&str>,
+) -> Result<Option<FileScanResult>, String> {
+    let conn = open_cache()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT payload FROM scan_cache
+             WHERE file_path = ?1 AND file_size = ?2 AND COALESCE(modified, '') = COALESCE(?3, '')",
+        )
+        .map_err(|err| format!("Failed to read cache: {err}"))?;
+    let mut rows = stmt
+        .query(params![file_path, file_size as i64, modified])
+        .map_err(|err| format!("Failed to query cache: {err}"))?;
+    if let Some(row) = rows
+        .next()
+        .map_err(|err| format!("Failed to inspect cache: {err}"))?
+    {
+        let payload: String = row
+            .get(0)
+            .map_err(|err| format!("Failed to load cache: {err}"))?;
+        let result = serde_json::from_str::<FileScanResult>(&payload)
+            .map_err(|err| format!("Failed to parse cache: {err}"))?;
+        return Ok(Some(result));
+    }
+    Ok(None)
+}
+
+fn write_scan_cache(result: &FileScanResult) -> Result<(), String> {
+    let conn = open_cache()?;
+    let payload =
+        serde_json::to_string(result).map_err(|err| format!("Failed to serialize cache: {err}"))?;
+    conn.execute(
+        "INSERT INTO scan_cache (file_path, file_size, modified, payload, updated_at)
+         VALUES (?1, ?2, ?3, ?4, strftime('%s','now'))
+         ON CONFLICT(file_path) DO UPDATE SET
+            file_size = excluded.file_size,
+            modified = excluded.modified,
+            payload = excluded.payload,
+            updated_at = excluded.updated_at",
+        params![
+            result.file_path,
+            result.file_size as i64,
+            result.modified,
+            payload
+        ],
+    )
+    .map_err(|err| format!("Failed to write cache: {err}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1131,5 +1220,25 @@ mod tests {
         .unwrap();
         assert_eq!(response.results.len(), MAX_SEARCH_RESULTS);
         assert!(response.truncated);
+    }
+
+    #[test]
+    fn scan_cache_round_trips_valid_scan() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        writeln!(
+            file,
+            "{{\"id\":\"cached\",\"model\":\"gpt-4.1\",\"response\":\"ok\"}}"
+        )
+        .unwrap();
+        let path = file.path().to_string_lossy().to_string();
+
+        let first = scan_jsonl_inner(path.clone(), None, None).unwrap();
+        assert!(!first.cache_hit);
+        assert_eq!(first.valid_records, 1);
+
+        let second = scan_jsonl_inner(path, None, None).unwrap();
+        assert!(second.cache_hit);
+        assert_eq!(second.valid_records, 1);
+        assert_eq!(second.summaries[0].id, "cached");
     }
 }
