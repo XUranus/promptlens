@@ -7,6 +7,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
+    collections::HashSet,
     fs::{self, File},
     io::{BufRead, BufReader, Seek, SeekFrom},
     path::Path,
@@ -16,7 +17,7 @@ use std::{
 use tauri::{AppHandle, Emitter, State};
 
 const MAX_SEARCH_RESULTS: usize = 1000;
-const CACHE_SCHEMA_VERSION: i64 = 2;
+const CACHE_SCHEMA_VERSION: i64 = 3;
 
 struct AppState {
     cancel_scan: AtomicBool,
@@ -41,6 +42,10 @@ struct LogSummary {
     timestamp: Option<String>,
     provider: Option<String>,
     model: Option<String>,
+    trace_id: Option<String>,
+    session_id: Option<String>,
+    request_id: Option<String>,
+    parent_id: Option<String>,
     status: String,
     latency_ms: Option<u64>,
     prompt_tokens: Option<u64>,
@@ -138,6 +143,10 @@ struct NormalizedCall {
     timestamp: Option<String>,
     provider: Option<String>,
     model: Option<String>,
+    trace_id: Option<String>,
+    session_id: Option<String>,
+    request_id: Option<String>,
+    parent_id: Option<String>,
     endpoint: Option<String>,
     status: String,
     latency_ms: Option<u64>,
@@ -214,6 +223,15 @@ enum NormalizedContent {
     },
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportRecordsRequest {
+    file_path: String,
+    line_numbers: Vec<usize>,
+    kind: String,
+    default_file_name: String,
+}
+
 #[tauri::command]
 fn open_file_dialog() -> Option<String> {
     rfd::FileDialog::new()
@@ -284,6 +302,85 @@ fn save_text_file(default_file_name: String, contents: String) -> Result<Option<
         return Ok(None);
     };
     fs::write(&path, contents).map_err(|err| format!("Failed to save file: {err}"))?;
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+fn export_records(request: ExportRecordsRequest) -> Result<Option<String>, String> {
+    let Some(path) = rfd::FileDialog::new()
+        .set_file_name(request.default_file_name)
+        .save_file()
+    else {
+        return Ok(None);
+    };
+    let selected: HashSet<usize> = request.line_numbers.into_iter().collect();
+    let file =
+        File::open(&request.file_path).map_err(|err| format!("Failed to open file: {err}"))?;
+    let mut reader = BufReader::new(file);
+    let mut output = String::new();
+    let mut line = String::new();
+    let mut byte_offset = 0u64;
+    let mut line_number = 0usize;
+
+    loop {
+        line.clear();
+        let bytes_read = reader
+            .read_line(&mut line)
+            .map_err(|err| format!("Failed to export record: {err}"))?;
+        if bytes_read == 0 {
+            break;
+        }
+        line_number += 1;
+        let current_offset = byte_offset;
+        byte_offset += bytes_read as u64;
+        if !selected.contains(&line_number) {
+            continue;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match request.kind.as_str() {
+            "raw_jsonl" => {
+                output.push_str(trimmed);
+                output.push('\n');
+            }
+            "normalized_jsonl" => {
+                let value = serde_json::from_str::<Value>(trimmed)
+                    .map_err(|err| format!("Failed to parse line {line_number}: {err}"))?;
+                let summary = summary_from_value(&value, line_number, current_offset, None);
+                let normalized = normalize_call(&value, &summary);
+                output.push_str(
+                    &serde_json::to_string(&normalized)
+                        .map_err(|err| format!("Failed to serialize normalized record: {err}"))?,
+                );
+                output.push('\n');
+            }
+            "session_markdown" => {
+                let value = serde_json::from_str::<Value>(trimmed)
+                    .map_err(|err| format!("Failed to parse line {line_number}: {err}"))?;
+                let summary = summary_from_value(&value, line_number, current_offset, None);
+                let normalized = normalize_call(&value, &summary);
+                output.push_str(&format!(
+                    "## Line {} · {}\n\n- Provider: {}\n- Model: {}\n- Trace: {}\n- Session: {}\n- Status: {}\n- Latency: {} ms\n\n",
+                    summary.line_number,
+                    summary.id,
+                    summary.provider.as_deref().unwrap_or("unknown"),
+                    summary.model.as_deref().unwrap_or("unknown"),
+                    summary.trace_id.as_deref().unwrap_or("-"),
+                    summary.session_id.as_deref().unwrap_or("-"),
+                    summary.status,
+                    summary.latency_ms.map(|value| value.to_string()).unwrap_or_else(|| "-".to_string()),
+                ));
+                if let Some(response) = normalized.response.and_then(|response| response.text) {
+                    output.push_str(&response);
+                    output.push_str("\n\n");
+                }
+            }
+            _ => return Err("Unsupported export kind".to_string()),
+        }
+    }
+    fs::write(&path, output).map_err(|err| format!("Failed to save export: {err}"))?;
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
@@ -377,6 +474,10 @@ fn scan_jsonl_inner(
                     timestamp: None,
                     provider: None,
                     model: None,
+                    trace_id: None,
+                    session_id: None,
+                    request_id: None,
+                    parent_id: None,
                     status: "invalid_json".to_string(),
                     latency_ms: None,
                     prompt_tokens: None,
@@ -476,6 +577,10 @@ fn scan_jsonl_incremental(
                     timestamp: None,
                     provider: None,
                     model: None,
+                    trace_id: None,
+                    session_id: None,
+                    request_id: None,
+                    parent_id: None,
                     status: "invalid_json".to_string(),
                     latency_ms: None,
                     prompt_tokens: None,
@@ -760,6 +865,10 @@ fn read_record(
                 timestamp: None,
                 provider: None,
                 model: None,
+                trace_id: None,
+                session_id: None,
+                request_id: None,
+                parent_id: None,
                 status: "invalid_json".to_string(),
                 latency_ms: None,
                 prompt_tokens: None,
@@ -964,6 +1073,36 @@ fn summary_from_value(
         timestamp: first_string(value, &["timestamp", "time", "created_at", "createdAt"]),
         provider: first_string(value, &["provider", "vendor"]),
         model: find_model(value),
+        trace_id: first_string(
+            value,
+            &["trace_id", "traceId", "trace", "traceID", "run_id", "runId"],
+        ),
+        session_id: first_string(
+            value,
+            &[
+                "session_id",
+                "sessionId",
+                "conversation_id",
+                "conversationId",
+                "thread_id",
+                "threadId",
+            ],
+        ),
+        request_id: first_string(
+            value,
+            &[
+                "request_id",
+                "requestId",
+                "call_id",
+                "callId",
+                "span_id",
+                "spanId",
+            ],
+        ),
+        parent_id: first_string(
+            value,
+            &["parent_id", "parentId", "parent_span_id", "parentSpanId"],
+        ),
         status,
         latency_ms: first_u64(
             value,
@@ -1007,6 +1146,10 @@ fn normalize_call(value: &Value, summary: &LogSummary) -> NormalizedCall {
         timestamp: summary.timestamp.clone(),
         provider,
         model: summary.model.clone(),
+        trace_id: summary.trace_id.clone(),
+        session_id: summary.session_id.clone(),
+        request_id: summary.request_id.clone(),
+        parent_id: summary.parent_id.clone(),
         endpoint: first_string(value, &["endpoint", "url", "path"]),
         status: if summary.status == "invalid_json" {
             "unknown".to_string()
@@ -1472,6 +1615,7 @@ pub fn run() {
             get_cache_info,
             get_file_status,
             save_text_file,
+            export_records,
             read_record,
             search_jsonl,
             cancel_search
@@ -1504,6 +1648,9 @@ mod tests {
                 "timestamp": "2026-05-13T10:00:00Z",
                 "provider": "openai",
                 "model": "gpt-4.1",
+                "trace_id": "trace-1",
+                "conversation_id": "session-1",
+                "request_id": "request-1",
                 "request": {"messages": [{"role": "user", "content": "hello"}]},
                 "response": {"message": {"role": "assistant", "content": "world"}},
                 "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
@@ -1522,6 +1669,9 @@ mod tests {
         assert_eq!(result.summaries[0].line_number, 1);
         assert_eq!(result.summaries[0].byte_offset, 0);
         assert_eq!(result.summaries[0].total_tokens, Some(3));
+        assert_eq!(result.summaries[0].trace_id.as_deref(), Some("trace-1"));
+        assert_eq!(result.summaries[0].session_id.as_deref(), Some("session-1"));
+        assert_eq!(result.summaries[0].request_id.as_deref(), Some("request-1"));
         assert_eq!(result.summaries[1].status, "invalid_json");
         assert!(result.summaries[1].byte_offset > 0);
         std::env::remove_var("PROMPTLENS_CACHE_PATH");

@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.5.0 - Raw Data & Trace Intelligence
+
+### Added
+
+- Stable summary extraction for trace, session, request, and parent identifiers.
+- Trace panel for inspecting trace/session chains and filtering the active list by trace.
+- Provider, model, and issue-only advanced filters.
+- Streamed source-file export for raw JSONL, normalized JSONL, and session Markdown.
+- Trace/session/request/parent metadata in record details and CSV exports.
+
+### Changed
+
+- Session grouping now prefers stable trace/session identifiers before falling back to heuristic windows.
+- Cache schema upgraded to version 3 to include trace metadata in scan summaries.
+
+### Known Limits
+
+- Trace graph rendering is currently list-based; visual parent/child graph layout remains future work.
+- Raw batch exports parse selected lines from the source file and require the source file to remain available.
+
 ## v0.4.0 - Analysis & Diagnostics
 
 ### Added

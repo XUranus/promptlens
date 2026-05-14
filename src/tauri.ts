@@ -44,6 +44,15 @@ export async function saveTextFile(defaultFileName: string, contents: string): P
   return invoke("save_text_file", { defaultFileName, contents });
 }
 
+export async function exportRecords(
+  filePath: string,
+  lineNumbers: number[],
+  kind: "raw_jsonl" | "normalized_jsonl" | "session_markdown",
+  defaultFileName: string,
+): Promise<string | null> {
+  return invoke("export_records", { request: { filePath, lineNumbers, kind, defaultFileName } });
+}
+
 export async function readRecord(
   filePath: string,
   byteOffset: number,

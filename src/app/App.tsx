@@ -8,11 +8,13 @@ import {
   ChevronRight,
   Copy,
   Database,
+  Filter as FilterIcon,
   FileDown,
   FileJson,
   FolderOpen,
   GitCompare,
   Image,
+  Network,
   Moon,
   RotateCw,
   Search,
@@ -30,6 +32,7 @@ import {
   cancelScan,
   cancelSearch,
   clearScanCache,
+  exportRecords,
   getCacheInfo,
   getFileStatus,
   openFileDialog,
@@ -55,6 +58,7 @@ type Filter = "all" | "error" | "success" | "image" | "tool";
 type SortKey = "time" | "latency" | "tokens" | "model" | "status";
 type RightTab =
   | "metadata"
+  | "trace"
   | "sessions"
   | "analytics"
   | "issues"
@@ -77,6 +81,7 @@ type SessionGroup = {
   endTime?: string;
   provider: string;
   model: string;
+  traceKey: string | null;
   errors: number;
   totalTokens: number;
   avgLatencyMs: number | null;
@@ -114,6 +119,11 @@ type WorkspaceTab = {
   compareBase: RecordDetail | null;
   searchTerm: string;
   searchResults: SearchResult[];
+  providerFilter: string;
+  modelFilter: string;
+  statusFilter: string;
+  issueOnly: boolean;
+  traceFilter: string;
   lastSearchIndexed: boolean | null;
   newLineNumbers: number[];
   lastScanMs: number | null;
@@ -147,11 +157,20 @@ export function App() {
   const compareBase = activeTab?.compareBase ?? null;
   const searchTerm = activeTab?.searchTerm ?? "";
   const searchResults = activeTab?.searchResults ?? [];
+  const providerFilter = activeTab?.providerFilter ?? "";
+  const modelFilter = activeTab?.modelFilter ?? "";
+  const statusFilter = activeTab?.statusFilter ?? "";
+  const issueOnly = activeTab?.issueOnly ?? false;
+  const traceFilter = activeTab?.traceFilter ?? "";
   const lastSearchIndexed = activeTab?.lastSearchIndexed ?? null;
   const newLineNumbers = activeTab?.newLineNumbers ?? [];
   const lastScanMs = activeTab?.lastScanMs ?? null;
   const lastSearchMs = activeTab?.lastSearchMs ?? null;
 
+  const allAnalytics = useMemo(() => buildAnalytics(file?.summaries ?? []), [file]);
+  const allIssues = useMemo(() => detectIssues(file?.summaries ?? [], allAnalytics), [allAnalytics, file]);
+  const issueLineSet = useMemo(() => new Set(allIssues.map((issue) => issue.summary.lineNumber)), [allIssues]);
+  const filterOptions = useMemo(() => buildFilterOptions(file?.summaries ?? []), [file]);
   const filtered = useMemo(() => {
     if (!file) return [];
     const q = query.trim().toLowerCase();
@@ -163,15 +182,20 @@ export function App() {
         if (filter === "success" && item.status !== "success") return false;
         if (filter === "image" && !item.hasImage) return false;
         if (filter === "tool" && !item.hasToolCall) return false;
+        if (providerFilter && (item.provider || "unknown provider") !== providerFilter) return false;
+        if (modelFilter && (item.model || "unknown model") !== modelFilter) return false;
+        if (statusFilter && item.status !== statusFilter) return false;
+        if (traceFilter && (item.traceId || item.sessionId || "") !== traceFilter) return false;
+        if (issueOnly && !issueLineSet.has(item.lineNumber)) return false;
         if (latencyMin && (!item.latencyMs || item.latencyMs < minLatency)) return false;
         if (tokensMin && (!item.totalTokens || item.totalTokens < minTokens)) return false;
         if (!q) return true;
-        return [item.model, item.provider, item.preview, item.timestamp, item.status]
+        return [item.model, item.provider, item.preview, item.timestamp, item.status, item.traceId, item.sessionId, item.requestId]
           .filter(Boolean)
           .some((value) => String(value).toLowerCase().includes(q));
       })
       .sort((a, b) => compareSummary(a, b, sortKey));
-  }, [file, filter, latencyMin, query, sortKey, tokensMin]);
+  }, [file, filter, issueLineSet, issueOnly, latencyMin, modelFilter, providerFilter, query, sortKey, statusFilter, tokensMin, traceFilter]);
   const sessions = useMemo(() => buildSessionGroups(file?.summaries ?? []), [file]);
   const analytics = useMemo(() => buildAnalytics(filtered), [filtered]);
   const issues = useMemo(() => detectIssues(filtered, analytics), [analytics, filtered]);
@@ -190,6 +214,11 @@ export function App() {
       compareBase: null,
       searchTerm: "",
       searchResults: [],
+      providerFilter: "",
+      modelFilter: "",
+      statusFilter: "",
+      issueOnly: false,
+      traceFilter: "",
       lastSearchIndexed: null,
       newLineNumbers: [],
       lastScanMs: result.durationMs,
@@ -424,6 +453,23 @@ export function App() {
     }
   }
 
+  async function handleRawExport(kind: "raw_jsonl" | "normalized_jsonl" | "session_markdown") {
+    if (!file) return;
+    try {
+      const baseName = file.fileName.replace(/\.[^.]+$/, "");
+      const extension = kind === "session_markdown" ? "md" : "jsonl";
+      const saved = await exportRecords(
+        file.filePath,
+        filtered.map((item) => item.lineNumber),
+        kind,
+        `${baseName}-${kind}.${extension}`,
+      );
+      if (saved) setError(`Saved ${saved}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   function handleCloseTab(tabId: string) {
     setTabs((current) => {
       const next = current.filter((tab) => tab.id !== tabId);
@@ -513,6 +559,29 @@ export function App() {
           <option value="model">Model</option>
           <option value="status">Status</option>
         </select>
+        <select value={providerFilter} onChange={(event) => updateActiveTab({ providerFilter: event.target.value })}>
+          <option value="">Provider</option>
+          {filterOptions.providers.map((provider) => (
+            <option key={provider} value={provider}>
+              {provider}
+            </option>
+          ))}
+        </select>
+        <select value={modelFilter} onChange={(event) => updateActiveTab({ modelFilter: event.target.value })}>
+          <option value="">Model</option>
+          {filterOptions.models.map((model) => (
+            <option key={model} value={model}>
+              {model}
+            </option>
+          ))}
+        </select>
+        <button
+          className={`icon-button ${issueOnly ? "active" : ""}`}
+          onClick={() => updateActiveTab({ issueOnly: !issueOnly })}
+          title="Issue records only"
+        >
+          <FilterIcon size={16} />
+        </button>
         <input
           className="threshold-input"
           value={latencyMin}
@@ -595,6 +664,7 @@ export function App() {
             sessions={sessions}
             analytics={analytics}
             issues={issues}
+            filterOptions={filterOptions}
             searchTerm={searchTerm}
             setSearchTerm={(term) => updateActiveTab({ searchTerm: term })}
             searching={searching}
@@ -602,7 +672,9 @@ export function App() {
             lastSearchIndexed={lastSearchIndexed}
             onSearch={handleSearch}
             onJump={jumpToResult}
+            onTraceFilter={(trace) => updateActiveTab({ traceFilter: trace, issueOnly: false })}
             onExport={handleExport}
+            onRawExport={handleRawExport}
             onClearCompare={() => updateActiveTab({ compareBase: null })}
           />
         </aside>
@@ -911,6 +983,7 @@ function RightPanel({
   sessions,
   analytics,
   issues,
+  filterOptions,
   searchTerm,
   setSearchTerm,
   searching,
@@ -918,7 +991,9 @@ function RightPanel({
   lastSearchIndexed,
   onSearch,
   onJump,
+  onTraceFilter,
   onExport,
+  onRawExport,
   onClearCompare,
 }: {
   tab: RightTab;
@@ -930,6 +1005,7 @@ function RightPanel({
   sessions: SessionGroup[];
   analytics: AnalyticsSummary;
   issues: IssueRecord[];
+  filterOptions: { traces: string[]; providers: string[]; models: string[] };
   searchTerm: string;
   setSearchTerm: (term: string) => void;
   searching: boolean;
@@ -937,7 +1013,9 @@ function RightPanel({
   lastSearchIndexed: boolean | null;
   onSearch: () => void;
   onJump: (result: SearchResult) => void;
+  onTraceFilter: (trace: string) => void;
   onExport: (kind: "jsonl" | "csv" | "report") => void;
+  onRawExport: (kind: "raw_jsonl" | "normalized_jsonl" | "session_markdown") => void;
   onClearCompare: () => void;
 }) {
   return (
@@ -945,6 +1023,9 @@ function RightPanel({
       <div className="tabs">
         <button className={tab === "metadata" ? "active" : ""} onClick={() => setTab("metadata")}>
           Metadata
+        </button>
+        <button className={tab === "trace" ? "active" : ""} onClick={() => setTab("trace")} title="Trace">
+          <Network size={14} />
         </button>
         <button className={tab === "sessions" ? "active" : ""} onClick={() => setTab("sessions")} title="Sessions">
           <Users size={14} />
@@ -978,7 +1059,8 @@ function RightPanel({
         </button>
       </div>
       {tab === "metadata" ? <MetadataView detail={detail} file={file} /> : null}
-      {tab === "sessions" ? <SessionsView sessions={sessions} onJump={onJump} /> : null}
+      {tab === "trace" ? <TraceView file={file} traces={filterOptions.traces} onJump={onJump} onTraceFilter={onTraceFilter} /> : null}
+      {tab === "sessions" ? <SessionsView sessions={sessions} onJump={onJump} onTraceFilter={onTraceFilter} /> : null}
       {tab === "analytics" ? <AnalyticsView analytics={analytics} filtered={filtered} /> : null}
       {tab === "issues" ? <IssuesView issues={issues} onJump={onJump} /> : null}
       {tab === "diff" ? <DiffView base={compareBase} target={detail} onClear={onClearCompare} /> : null}
@@ -998,13 +1080,80 @@ function RightPanel({
         />
       ) : null}
       {tab === "export" ? (
-        <ExportView file={file} filtered={filtered} analytics={analytics} issues={issues} onExport={onExport} />
+        <ExportView
+          file={file}
+          filtered={filtered}
+          analytics={analytics}
+          issues={issues}
+          onExport={onExport}
+          onRawExport={onRawExport}
+        />
       ) : null}
     </div>
   );
 }
 
-function SessionsView({ sessions, onJump }: { sessions: SessionGroup[]; onJump: (result: SearchResult) => void }) {
+function TraceView({
+  file,
+  traces,
+  onJump,
+  onTraceFilter,
+}: {
+  file: FileScanResult | null;
+  traces: string[];
+  onJump: (result: SearchResult) => void;
+  onTraceFilter: (trace: string) => void;
+}) {
+  if (!file) return <div className="empty-state">Open a file to inspect traces.</div>;
+  const grouped = traces.map((trace) => ({
+    trace,
+    records: file.summaries.filter((item) => (item.traceId || item.sessionId) === trace),
+  }));
+  if (!grouped.length) return <div className="empty-state">No stable trace or session identifiers found.</div>;
+  return (
+    <div className="debug-view">
+      <div className="section-head">
+        <h3>Trace Chains</h3>
+        <span>{grouped.length.toLocaleString()} traces</span>
+      </div>
+      <div className="trace-list">
+        {grouped.slice(0, 100).map(({ trace, records }) => (
+          <div key={trace} className="trace-card">
+            <div className="trace-head">
+              <strong>{trace}</strong>
+              <button onClick={() => onTraceFilter(trace)}>Filter</button>
+            </div>
+            {records
+              .slice()
+              .sort((a, b) => a.lineNumber - b.lineNumber)
+              .slice(0, 30)
+              .map((record) => (
+                <button
+                  key={`${record.lineNumber}-${record.byteOffset}`}
+                  className="trace-node"
+                  onClick={() => onJump({ lineNumber: record.lineNumber, byteOffset: record.byteOffset, context: record.id })}
+                >
+                  <span>Line {record.lineNumber}</span>
+                  <strong>{record.requestId || record.id}</strong>
+                  <small>{record.parentId ? `parent ${record.parentId}` : record.status}</small>
+                </button>
+              ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SessionsView({
+  sessions,
+  onJump,
+  onTraceFilter,
+}: {
+  sessions: SessionGroup[];
+  onJump: (result: SearchResult) => void;
+  onTraceFilter: (trace: string) => void;
+}) {
   if (!sessions.length) return <div className="empty-state">Open a file to inspect grouped sessions.</div>;
   return (
     <div className="debug-view">
@@ -1030,6 +1179,16 @@ function SessionsView({ sessions, onJump }: { sessions: SessionGroup[]; onJump: 
               <span>{session.errors.toLocaleString()} issues</span>
               <span>{formatTokens(session.totalTokens || undefined)}</span>
               <span>{session.avgLatencyMs === null ? "latency ?" : formatLatency(Math.round(session.avgLatencyMs))}</span>
+              {session.traceKey ? (
+                <span
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onTraceFilter(session.traceKey!);
+                  }}
+                >
+                  trace
+                </span>
+              ) : null}
             </div>
           </button>
         ))}
@@ -1119,12 +1278,14 @@ function ExportView({
   analytics,
   issues,
   onExport,
+  onRawExport,
 }: {
   file: FileScanResult | null;
   filtered: LogSummary[];
   analytics: AnalyticsSummary;
   issues: IssueRecord[];
   onExport: (kind: "jsonl" | "csv" | "report") => void;
+  onRawExport: (kind: "raw_jsonl" | "normalized_jsonl" | "session_markdown") => void;
 }) {
   if (!file) return <div className="empty-state">Open a file to export records and reports.</div>;
   return (
@@ -1146,6 +1307,18 @@ function ExportView({
         <button onClick={() => onExport("report")}>
           <FileDown size={15} />
           Export Markdown report
+        </button>
+        <button onClick={() => onRawExport("raw_jsonl")}>
+          <FileDown size={15} />
+          Export raw JSONL
+        </button>
+        <button onClick={() => onRawExport("normalized_jsonl")}>
+          <FileDown size={15} />
+          Export normalized JSONL
+        </button>
+        <button onClick={() => onRawExport("session_markdown")}>
+          <FileDown size={15} />
+          Export session Markdown
         </button>
       </div>
     </div>
@@ -1310,6 +1483,10 @@ function MetadataView({ detail, file }: { detail: RecordDetail | null; file: Fil
           <KeyValue label="Status" value={summary.status} />
           <KeyValue label="Model" value={summary.model || "unknown"} />
           <KeyValue label="Provider" value={summary.provider || "unknown"} />
+          <KeyValue label="Trace" value={summary.traceId || "-"} />
+          <KeyValue label="Session" value={summary.sessionId || "-"} />
+          <KeyValue label="Request" value={summary.requestId || "-"} />
+          <KeyValue label="Parent" value={summary.parentId || "-"} />
           <KeyValue label="Latency" value={formatLatency(summary.latencyMs)} />
           <KeyValue label="Prompt tokens" value={usage?.promptTokens ?? summary.promptTokens ?? "-"} />
           <KeyValue label="Completion tokens" value={usage?.completionTokens ?? summary.completionTokens ?? "-"} />
@@ -1512,11 +1689,12 @@ function compareSummary(a: LogSummary, b: LogSummary, key: SortKey) {
 function buildSessionGroups(items: LogSummary[]): SessionGroup[] {
   const groups = new Map<string, LogSummary[]>();
   for (const item of items) {
+    const stable = item.traceId || item.sessionId;
     const time = Date.parse(item.timestamp ?? "");
     const bucket = Number.isFinite(time) ? Math.floor(time / (5 * 60 * 1000)) : Math.floor(item.lineNumber / 25);
     const provider = item.provider || "unknown provider";
     const model = item.model || "unknown model";
-    const id = `${provider}|${model}|${bucket}`;
+    const id = stable ? `trace|${stable}` : `${provider}|${model}|${bucket}`;
     groups.set(id, [...(groups.get(id) ?? []), item]);
   }
   return Array.from(groups.entries())
@@ -1525,6 +1703,7 @@ function buildSessionGroups(items: LogSummary[]): SessionGroup[] {
       const latencies = sorted.map((item) => item.latencyMs).filter((value): value is number => value !== undefined);
       const provider = sorted[0]?.provider || "unknown provider";
       const model = sorted[0]?.model || "unknown model";
+      const traceKey = sorted.find((item) => item.traceId || item.sessionId);
       const startTime = sorted.find((item) => item.timestamp)?.timestamp;
       const endTime = [...sorted].reverse().find((item) => item.timestamp)?.timestamp;
       return {
@@ -1537,6 +1716,7 @@ function buildSessionGroups(items: LogSummary[]): SessionGroup[] {
         endTime,
         provider,
         model,
+        traceKey: traceKey?.traceId || traceKey?.sessionId || null,
         errors: sorted.filter((item) => item.status === "error" || item.status === "invalid_json").length,
         totalTokens: sorted.reduce((sum, item) => sum + (item.totalTokens ?? 0), 0),
         avgLatencyMs: latencies.length ? latencies.reduce((sum, value) => sum + value, 0) / latencies.length : null,
@@ -1615,6 +1795,22 @@ function topCounts(values: string[]) {
     .slice(0, 8);
 }
 
+function buildFilterOptions(items: LogSummary[]) {
+  const providers = new Set<string>();
+  const models = new Set<string>();
+  const traces = new Set<string>();
+  for (const item of items) {
+    providers.add(item.provider || "unknown provider");
+    models.add(item.model || "unknown model");
+    if (item.traceId || item.sessionId) traces.add(item.traceId || item.sessionId || "");
+  }
+  return {
+    providers: Array.from(providers).sort(),
+    models: Array.from(models).sort(),
+    traces: Array.from(traces).filter(Boolean).sort(),
+  };
+}
+
 function severityRank(severity: IssueRecord["severity"]) {
   if (severity === "high") return 3;
   if (severity === "medium") return 2;
@@ -1632,6 +1828,10 @@ function summariesToCsv(items: LogSummary[]) {
     "timestamp",
     "provider",
     "model",
+    "traceId",
+    "sessionId",
+    "requestId",
+    "parentId",
     "status",
     "latencyMs",
     "promptTokens",
@@ -1648,6 +1848,10 @@ function summariesToCsv(items: LogSummary[]) {
       item.timestamp ?? "",
       item.provider ?? "",
       item.model ?? "",
+      item.traceId ?? "",
+      item.sessionId ?? "",
+      item.requestId ?? "",
+      item.parentId ?? "",
       item.status,
       item.latencyMs ?? "",
       item.promptTokens ?? "",
@@ -1684,6 +1888,7 @@ function buildMarkdownReport(
     `- Valid records: ${file.validRecords.toLocaleString()}`,
     `- Invalid records: ${file.invalidRecords.toLocaleString()}`,
     `- Error rate: ${analytics.errorRate.toFixed(1)}%`,
+    `- Trace/session groups: ${filterOptionsFromSessions(sessions).toLocaleString()}`,
     `- P95 latency: ${analytics.p95Latency === null ? "-" : formatLatency(analytics.p95Latency)}`,
     `- P99 latency: ${analytics.p99Latency === null ? "-" : formatLatency(analytics.p99Latency)}`,
     `- Total tokens: ${analytics.totalTokens.toLocaleString()}`,
@@ -1703,6 +1908,10 @@ function buildMarkdownReport(
       : ["- No obvious issues in the current filter."]),
   ];
   return `${lines.join("\n")}\n`;
+}
+
+function filterOptionsFromSessions(sessions: SessionGroup[]) {
+  return new Set(sessions.map((session) => session.traceKey).filter(Boolean)).size;
 }
 
 function loadWorkspace(): { paths: string[]; activePath: string | null } {

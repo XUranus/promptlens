@@ -68,3 +68,12 @@ Current Linux bundle targets are `deb` and `rpm`. AppImage should be re-enabled 
 - Export JSONL summaries, CSV summaries, and Markdown report through the native save dialog.
 - Confirm Markdown report includes top models/providers, sessions, and detected issues.
 - Confirm rewritten or truncated files still require full rescan after diagnostics tabs are used.
+
+## v0.5.0 Raw Data & Trace Intelligence
+
+- Open a JSONL file containing `trace_id`, `conversation_id`, `request_id`, or parent span fields.
+- Verify Metadata and Trace tabs show stable identifiers.
+- Filter by a trace from the Trace or Sessions panel and verify the active list narrows.
+- Use provider/model selectors and issue-only filter together with text search.
+- Export raw JSONL, normalized JSONL, and session Markdown for the active filtered records.
+- Confirm cache schema upgrade performs a cold scan once and then cache hits include trace metadata.

@@ -7,6 +7,10 @@ export type LogSummary = {
   timestamp?: string;
   provider?: string;
   model?: string;
+  traceId?: string;
+  sessionId?: string;
+  requestId?: string;
+  parentId?: string;
   status: Status;
   latencyMs?: number;
   promptTokens?: number;
@@ -61,6 +65,10 @@ export type NormalizedCall = {
   timestamp?: string;
   provider?: string;
   model?: string;
+  traceId?: string;
+  sessionId?: string;
+  requestId?: string;
+  parentId?: string;
   endpoint?: string;
   status: "success" | "error" | "unknown";
   latencyMs?: number;

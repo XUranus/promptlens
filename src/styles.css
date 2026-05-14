@@ -597,7 +597,7 @@ select {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(11, minmax(38px, 1fr));
+  grid-template-columns: repeat(12, minmax(36px, 1fr));
   position: sticky;
   top: 0;
   z-index: 2;
@@ -657,7 +657,8 @@ select {
 .session-list,
 .issue-list,
 .rank-list,
-.export-actions {
+.export-actions,
+.trace-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -665,7 +666,8 @@ select {
 
 .session-card,
 .issue-card,
-.export-actions button {
+.export-actions button,
+.trace-card {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -674,6 +676,56 @@ select {
   text-align: left;
   background: var(--surface);
   cursor: pointer;
+}
+
+.trace-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.trace-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trace-head button {
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  padding: 4px 8px;
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.trace-node {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) minmax(0, 100px);
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--border);
+  padding: 7px 0;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.trace-node strong,
+.trace-node small {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.trace-node span,
+.trace-node small {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .session-top,
