@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  AlertCircle,
   AlertTriangle,
   BarChart3,
+  Braces,
   ChevronDown,
   ChevronRight,
+  Code,
   Copy,
   Database,
   Filter as FilterIcon,
   FileDown,
-  FileJson,
+  FileText,
   FolderOpen,
   GitCompare,
   Image,
@@ -111,6 +115,14 @@ type IssueRecord = {
 const THEME_KEY = "promptlens.theme";
 const WORKSPACE_KEY = "promptlens.workspace";
 
+const LEFT_MIN = 260;
+const LEFT_MAX = 560;
+const LEFT_DEFAULT = 340;
+const RIGHT_MIN = 300;
+const RIGHT_MAX = 640;
+const RIGHT_DEFAULT = 400;
+const CENTER_MIN = 400;
+
 type WorkspaceTab = {
   id: string;
   file: FileScanResult;
@@ -143,6 +155,8 @@ export function App() {
   const [restoredWorkspace, setRestoredWorkspace] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [fadeOut, setFadeOut] = useState(false);
   const [searching, setSearching] = useState(false);
   const [scanProgress, setScanProgress] = useState<ProgressEvent | null>(null);
   const [searchProgress, setSearchProgress] = useState<ProgressEvent | null>(null);
@@ -150,6 +164,9 @@ export function App() {
   const [cacheInfo, setCacheInfo] = useState<CacheInfo | null>(null);
   const [fileStatus, setFileStatus] = useState<FileStatus | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [leftPanelWidth, setLeftPanelWidth] = useState<number>(() => loadPanelWidth("left", LEFT_DEFAULT));
+  const [rightPanelWidth, setRightPanelWidth] = useState<number>(() => loadPanelWidth("right", RIGHT_DEFAULT));
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
   const file = activeTab?.file ?? null;
   const selected = activeTab?.selected ?? null;
@@ -234,6 +251,22 @@ export function App() {
     localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
 
+  // Overlay: show spinner while loading, fade out 500ms after load completes
+  useEffect(() => {
+    if (loading) {
+      setReady(false);
+      setFadeOut(false);
+      return;
+    }
+    if (!file) {
+      setReady(true);
+      return;
+    }
+    const fadeTimer = setTimeout(() => setFadeOut(true), 500);
+    const hideTimer = setTimeout(() => setReady(true), 800);
+    return () => { clearTimeout(fadeTimer); clearTimeout(hideTimer); };
+  }, [loading, file]);
+
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       const mod = event.metaKey || event.ctrlKey;
@@ -316,6 +349,133 @@ export function App() {
       window.clearInterval(timer);
     };
   }, [file?.filePath, file?.fileSize, file?.modified]);
+
+  // Panel resize via drag handles
+  useEffect(() => {
+    let active: "left" | "right" | null = null;
+    let startX = 0;
+    let startLeft = leftPanelWidth;
+    let startRight = rightPanelWidth;
+    function applyDirect(left: number, right: number) {
+      const el = workspaceRef.current;
+      if (!el) return;
+      el.style.gridTemplateColumns = `${left}px 1px minmax(0, 1fr) 1px ${right}px`;
+    }
+
+    function onMouseMove(e: MouseEvent) {
+      if (!active) return;
+      e.preventDefault();
+      const ws = workspaceRef.current;
+      const available = ws ? ws.offsetWidth - 2 : 9999;
+      const dx = e.clientX - startX;
+      if (active === "left") {
+        const maxL = Math.min(LEFT_MAX, available - startRight - CENTER_MIN);
+        const newL = Math.round(Math.min(maxL, Math.max(LEFT_MIN, startLeft + dx)));
+        applyDirect(newL, startRight);
+      } else {
+        const maxR = Math.min(RIGHT_MAX, available - startLeft - CENTER_MIN);
+        const newR = Math.round(Math.min(maxR, Math.max(RIGHT_MIN, startRight - dx)));
+        applyDirect(startLeft, newR);
+      }
+    }
+
+    function onMouseUp(e: MouseEvent) {
+      if (!active) return;
+      const handle = active;
+      active = null;
+      document.body.classList.remove("resizing");
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      e.preventDefault();
+      const el = workspaceRef.current;
+      if (!el) return;
+      const available = el.offsetWidth - 2;
+      // Template: "Lpx 1px minmax(0, 1fr) 1px Rpx"
+      const match = el.style.gridTemplateColumns.match(/^(\d+)px/);
+      if (handle === "left" && match) {
+        const maxL = Math.min(LEFT_MAX, available - startRight - CENTER_MIN);
+        const val = Math.round(Math.min(maxL, Math.max(LEFT_MIN, Number(match[1]))));
+        setLeftPanelWidth(val);
+        savePanelWidth("left", val);
+      } else {
+        const parts = el.style.gridTemplateColumns.split(" ");
+        const last = parts[parts.length - 1];
+        const rMatch = last.match(/^(\d+)px/);
+        if (rMatch) {
+          const maxR = Math.min(RIGHT_MAX, available - startLeft - CENTER_MIN);
+          const val = Math.round(Math.min(maxR, Math.max(RIGHT_MIN, Number(rMatch[1]))));
+          setRightPanelWidth(val);
+          savePanelWidth("right", val);
+        }
+      }
+    }
+
+    function onHandleDown(e: MouseEvent, which: "left" | "right") {
+      e.preventDefault();
+      active = which;
+      startX = e.clientX;
+      startLeft = leftPanelWidth;
+      startRight = rightPanelWidth;
+      document.body.classList.add("resizing");
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    }
+
+    const leftHandle = document.getElementById("resize-handle-left");
+    const rightHandle = document.getElementById("resize-handle-right");
+    if (leftHandle) {
+      const handler = (e: MouseEvent) => onHandleDown(e, "left");
+      leftHandle.addEventListener("mousedown", handler);
+      (leftHandle as any)._rh = handler;
+    }
+    if (rightHandle) {
+      const handler = (e: MouseEvent) => onHandleDown(e, "right");
+      rightHandle.addEventListener("mousedown", handler);
+      (rightHandle as any)._rh = handler;
+    }
+    return () => {
+      if (leftHandle) leftHandle.removeEventListener("mousedown", (leftHandle as any)._rh);
+      if (rightHandle) rightHandle.removeEventListener("mousedown", (rightHandle as any)._rh);
+    };
+  }, [leftPanelWidth, rightPanelWidth]);
+
+  // Clamp panel widths when window shrinks
+  useEffect(() => {
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function apply(left: number, right: number) {
+      const el = workspaceRef.current;
+      if (!el) return;
+      el.style.gridTemplateColumns = `${left}px 1px minmax(0, 1fr) 1px ${right}px`;
+    }
+
+    function onResize() {
+      const el = workspaceRef.current;
+      if (!el) return;
+      const available = el.offsetWidth - 2;
+      let l = leftPanelWidth;
+      let r = rightPanelWidth;
+      if (l + r + CENTER_MIN > available) {
+        const deficit = l + r + CENTER_MIN - available;
+        const total = l + r;
+        l = Math.max(LEFT_MIN, Math.round(l - deficit * (l / total)));
+        r = Math.max(RIGHT_MIN, Math.round(r - deficit * (r / total)));
+        apply(l, r);
+      }
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        if (l !== leftPanelWidth) { setLeftPanelWidth(l); savePanelWidth("left", l); }
+        if (r !== rightPanelWidth) { setRightPanelWidth(r); savePanelWidth("right", r); }
+      }, 200);
+    }
+
+    window.addEventListener("resize", onResize);
+    onResize();
+    return () => {
+      window.removeEventListener("resize", onResize);
+      if (debounceTimer) clearTimeout(debounceTimer);
+    };
+  }, [leftPanelWidth, rightPanelWidth]);
 
   async function loadFile(path: string, options?: { quiet?: boolean }) {
     if (!options?.quiet) setError(null);
@@ -513,10 +673,31 @@ export function App() {
     fileStatus.fileSize > file.fileSize;
 
   return (
-    <main className="app-shell">
+    <>
+      <div className="app-bg-orbs" aria-hidden="true" />
+      <main className="app-shell">
+      <TitleBar theme={theme} onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")} />
       <header className="toolbar">
         <div className="brand">
-          <FileJson size={19} />
+          <svg width="24" height="24" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+            <rect width="512" height="512" rx="112" fill="#1a1e2e"/>
+            <circle cx="228" cy="218" r="128" stroke="url(#pl-lens)" strokeWidth="28"/>
+            <circle cx="228" cy="218" r="112" fill="rgba(74,123,247,0.08)"/>
+            <line x1="168" y1="190" x2="288" y2="190" stroke="#6ea8fe" strokeWidth="10" strokeLinecap="round" opacity="0.7"/>
+            <line x1="168" y1="218" x2="260" y2="218" stroke="#6ea8fe" strokeWidth="10" strokeLinecap="round" opacity="0.5"/>
+            <line x1="168" y1="246" x2="240" y2="246" stroke="#6ea8fe" strokeWidth="10" strokeLinecap="round" opacity="0.35"/>
+            <line x1="324" y1="316" x2="408" y2="400" stroke="url(#pl-handle)" strokeWidth="32" strokeLinecap="round"/>
+            <defs>
+              <linearGradient id="pl-lens" x1="140" y1="90" x2="316" y2="346">
+                <stop stopColor="#6ea8fe"/>
+                <stop offset="1" stopColor="#4a7bf7"/>
+              </linearGradient>
+              <linearGradient id="pl-handle" x1="324" y1="316" x2="408" y2="400">
+                <stop stopColor="#8b95a5"/>
+                <stop offset="1" stopColor="#5a6370"/>
+              </linearGradient>
+            </defs>
+          </svg>
           <span>PromptLens</span>
         </div>
         <button className="button primary" onClick={handleOpen} disabled={loading}>
@@ -596,9 +777,6 @@ export function App() {
           placeholder="min tokens"
           inputMode="numeric"
         />
-        <button className="icon-button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title="Toggle theme">
-          {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-        </button>
       </header>
 
       {error ? <div className="error-banner">{error}</div> : null}
@@ -633,7 +811,11 @@ export function App() {
         <WorkspaceTabs tabs={tabs} activeTabId={activeTabId} onActivate={setActiveTabId} onClose={handleCloseTab} />
       ) : null}
 
-      <section className="workspace">
+      <section
+        className="workspace"
+        ref={workspaceRef}
+        style={{ gridTemplateColumns: `${leftPanelWidth}px 1px minmax(0, 1fr) 1px ${rightPanelWidth}px` }}
+      >
         <aside className="list-pane">
           <FileHeader file={file} count={filtered.length} />
           {file ? (
@@ -649,9 +831,13 @@ export function App() {
           )}
         </aside>
 
+        <div className="resize-handle" id="resize-handle-left" />
+
         <section className="conversation-pane">
           <DetailView detail={detail} selected={selected} onImagePreview={setImagePreview} />
         </section>
+
+        <div className="resize-handle" id="resize-handle-right" />
 
         <aside className="json-pane">
           <RightPanel
@@ -680,6 +866,12 @@ export function App() {
         </aside>
       </section>
 
+      {!ready && (
+        <div className={`load-overlay${fadeOut ? " fade-out" : ""}`}>
+          <div className="spinner" />
+        </div>
+      )}
+
       {imagePreview ? (
         <div className="image-modal" onClick={() => setImagePreview(null)}>
           <button className="modal-close" onClick={() => setImagePreview(null)}>
@@ -689,6 +881,53 @@ export function App() {
         </div>
       ) : null}
     </main>
+    </>
+  );
+}
+
+const appWindow = getCurrentWindow();
+
+function TitleBar({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: () => void }) {
+  const [maximized, setMaximized] = useState(false);
+
+  useEffect(() => {
+    appWindow.isMaximized().then(setMaximized);
+    const unlisten = appWindow.onResized(async () => {
+      setMaximized(await appWindow.isMaximized());
+    });
+    return () => { void unlisten.then((fn) => fn()); };
+  }, []);
+
+  function startDrag(e: React.MouseEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    void appWindow.startDragging();
+  }
+
+  return (
+    <div className="title-bar" onMouseDown={startDrag} onDoubleClick={() => appWindow.toggleMaximize()}>
+      <div className="traffic-lights" onMouseDown={(e) => e.stopPropagation()}>
+        <button className="tl-close" onClick={() => appWindow.close()} title="Close">
+          <svg width="8" height="8" viewBox="0 0 8 8"><path d="M1 1l6 6M7 1L1 7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+        </button>
+        <button className="tl-minimize" onClick={() => appWindow.minimize()} title="Minimize">
+          <svg width="8" height="2" viewBox="0 0 8 2"><path d="M1 1h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+        </button>
+        <button className="tl-maximize" onClick={() => appWindow.toggleMaximize()} title={maximized ? "Restore" : "Maximize"}>
+          {maximized ? (
+            <svg width="8" height="8" viewBox="0 0 8 8"><path d="M2.5 1.5h4v4" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinejoin="round"/><path d="M1.5 2.5h4v4" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinejoin="round"/></svg>
+          ) : (
+            <svg width="8" height="8" viewBox="0 0 8 8"><rect x="1" y="1" width="6" height="6" rx="0.8" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>
+          )}
+        </button>
+      </div>
+      <div className="title-bar-drag" />
+      <div className="title-bar-right" onMouseDown={(e) => e.stopPropagation()}>
+        <button className="icon-button tl-theme" onClick={onToggleTheme} title="Toggle theme">
+          {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1021,8 +1260,8 @@ function RightPanel({
   return (
     <div className="right-panel">
       <div className="tabs">
-        <button className={tab === "metadata" ? "active" : ""} onClick={() => setTab("metadata")}>
-          Metadata
+        <button className={tab === "metadata" ? "active" : ""} onClick={() => setTab("metadata")} title="Metadata">
+          <FileText size={14} />
         </button>
         <button className={tab === "trace" ? "active" : ""} onClick={() => setTab("trace")} title="Trace">
           <Network size={14} />
@@ -1036,23 +1275,23 @@ function RightPanel({
         <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")} title="Issues">
           <AlertTriangle size={14} />
         </button>
-        <button className={tab === "diff" ? "active" : ""} onClick={() => setTab("diff")}>
-          Diff
+        <button className={tab === "diff" ? "active" : ""} onClick={() => setTab("diff")} title="Diff">
+          <GitCompare size={14} />
         </button>
-        <button className={tab === "tools" ? "active" : ""} onClick={() => setTab("tools")}>
-          Tools
+        <button className={tab === "tools" ? "active" : ""} onClick={() => setTab("tools")} title="Tools">
+          <Wrench size={14} />
         </button>
-        <button className={tab === "error" ? "active" : ""} onClick={() => setTab("error")}>
-          Error
+        <button className={tab === "error" ? "active" : ""} onClick={() => setTab("error")} title="Error">
+          <AlertCircle size={14} />
         </button>
-        <button className={tab === "raw" ? "active" : ""} onClick={() => setTab("raw")}>
-          Raw
+        <button className={tab === "raw" ? "active" : ""} onClick={() => setTab("raw")} title="Raw">
+          <Code size={14} />
         </button>
-        <button className={tab === "json" ? "active" : ""} onClick={() => setTab("json")}>
-          JSON
+        <button className={tab === "json" ? "active" : ""} onClick={() => setTab("json")} title="JSON">
+          <Braces size={14} />
         </button>
-        <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")}>
-          Search
+        <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")} title="Search">
+          <Search size={14} />
         </button>
         <button className={tab === "export" ? "active" : ""} onClick={() => setTab("export")} title="Export">
           <FileDown size={14} />
@@ -1940,4 +2179,22 @@ function formatDuration(value: number | null) {
   if (value === null) return "-";
   if (value >= 1000) return `${(value / 1000).toFixed(2)}s`;
   return `${value}ms`;
+}
+
+const PANEL_WIDTH_KEY = "promptlens.panelWidth";
+
+function loadPanelWidth(side: "left" | "right", fallback: number): number {
+  try {
+    const raw = localStorage.getItem(`${PANEL_WIDTH_KEY}.${side}`);
+    if (!raw) return fallback;
+    const val = Number(raw);
+    if (!Number.isFinite(val)) return fallback;
+    return side === "left" ? Math.min(LEFT_MAX, Math.max(LEFT_MIN, val)) : Math.min(RIGHT_MAX, Math.max(RIGHT_MIN, val));
+  } catch {
+    return fallback;
+  }
+}
+
+function savePanelWidth(side: "left" | "right", value: number) {
+  localStorage.setItem(`${PANEL_WIDTH_KEY}.${side}`, String(value));
 }

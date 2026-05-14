@@ -15,8 +15,10 @@
         "title": "PromptLens",
         "width": 1440,
         "height": 920,
-        "minWidth": 1024,
-        "minHeight": 680
+        "minWidth": 980,
+        "minHeight": 680,
+        "transparent": true,
+        "decorations": false
       }
     ],
     "security": {
