@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { FileScanResult, RecordDetail, SearchResponse } from "./types";
+import type { CacheInfo, FileScanResult, FileStatus, RecordDetail, SearchResponse } from "./types";
 
 export async function openFileDialog(): Promise<string | null> {
   return invoke("open_file_dialog");
@@ -11,6 +11,18 @@ export async function scanJsonl(filePath: string): Promise<FileScanResult> {
 
 export async function cancelScan(): Promise<void> {
   return invoke("cancel_scan");
+}
+
+export async function clearScanCache(): Promise<void> {
+  return invoke("clear_scan_cache");
+}
+
+export async function getCacheInfo(): Promise<CacheInfo> {
+  return invoke("get_cache_info");
+}
+
+export async function getFileStatus(filePath: string): Promise<FileStatus> {
+  return invoke("get_file_status", { filePath });
 }
 
 export async function readRecord(

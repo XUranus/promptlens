@@ -105,3 +105,14 @@ export type ProgressEvent = {
   totalBytes: number;
   lineNumber: number;
 };
+
+export type CacheInfo = {
+  path: string;
+  exists: boolean;
+};
+
+export type FileStatus = {
+  exists: boolean;
+  fileSize?: number;
+  modified?: string;
+};

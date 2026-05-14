@@ -42,3 +42,11 @@ Current Linux bundle targets are `deb` and `rpm`. AppImage should be re-enabled 
 - Reopen an unchanged file and verify the tab shows `cache`.
 - Click rescan and verify the active file reloads.
 - Delete `.promptlens-cache.sqlite` when testing cold scan behavior.
+
+## v0.3.1 Workspace Stabilization
+
+- Open several JSONL files, quit, restart, and verify tabs restore.
+- Verify cache path points to the system app data directory.
+- Use the database toolbar button and verify cache is cleared.
+- Modify the active JSONL file externally and verify the rescan warning appears.
+- Confirm cache failures fall back to cold scan.

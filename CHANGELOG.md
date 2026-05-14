@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.3.1 - Workspace Stabilization
+
+### Added
+
+- Workspace tab persistence across app launches.
+- Startup restoration of recently open workspace files.
+- Cache clear command and toolbar action.
+- Cache info command with app data cache path.
+- Active file status polling with changed-on-disk warning.
+- Cache schema versioning via SQLite `user_version`.
+
+### Changed
+
+- Scan summary cache moved from the current working directory to the system app data directory.
+- Cache read errors now degrade to a cold scan instead of failing file open.
+
+### Known Limits
+
+- Workspace restore reopens files by path and depends on the original files still existing.
+- File change detection currently warns and asks for manual rescan; append-only incremental scanning is still future work.
+
 ## v0.3.0 - Local Workspace Foundation
 
 ### Added
@@ -19,7 +40,7 @@
 
 - SQLite cache stores scan summaries only; raw record reads still use the source JSONL file by byte offset.
 - Cache invalidation is based on file path, size, and modified time.
-- Workspace tabs are in-memory for this release; reopening the app starts with no tabs.
+- Workspace tabs are persisted starting in v0.3.1.
 
 ## v0.2.0 - Debugger Release Candidate
 

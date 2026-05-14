@@ -16,6 +16,7 @@ use std::{
 use tauri::{AppHandle, Emitter, State};
 
 const MAX_SEARCH_RESULTS: usize = 1000;
+const CACHE_SCHEMA_VERSION: i64 = 1;
 
 struct AppState {
     cancel_scan: AtomicBool,
@@ -99,6 +100,21 @@ struct ProgressEvent {
     processed_bytes: u64,
     total_bytes: u64,
     line_number: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CacheInfo {
+    path: String,
+    exists: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FileStatus {
+    exists: bool,
+    file_size: Option<u64>,
+    modified: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -208,6 +224,44 @@ fn cancel_scan(state: State<AppState>) {
     state.cancel_scan.store(true, Ordering::Relaxed);
 }
 
+#[tauri::command]
+fn clear_scan_cache() -> Result<(), String> {
+    let path = cache_db_path()?;
+    if path.exists() {
+        fs::remove_file(path).map_err(|err| format!("Failed to clear cache: {err}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_cache_info() -> Result<CacheInfo, String> {
+    let path = cache_db_path()?;
+    Ok(CacheInfo {
+        exists: path.exists(),
+        path: path.to_string_lossy().to_string(),
+    })
+}
+
+#[tauri::command]
+fn get_file_status(file_path: String) -> FileStatus {
+    match fs::metadata(file_path) {
+        Ok(metadata) => FileStatus {
+            exists: true,
+            file_size: Some(metadata.len()),
+            modified: metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs().to_string()),
+        },
+        Err(_) => FileStatus {
+            exists: false,
+            file_size: None,
+            modified: None,
+        },
+    }
+}
+
 fn scan_jsonl_inner(
     file_path: String,
     app: Option<&AppHandle>,
@@ -227,7 +281,7 @@ fn scan_jsonl_inner(
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|duration| duration.as_secs().to_string());
 
-    if let Some(mut cached) = read_scan_cache(&file_path, metadata.len(), modified.as_deref())? {
+    if let Ok(Some(mut cached)) = read_scan_cache(&file_path, metadata.len(), modified.as_deref()) {
         cached.duration_ms = started.elapsed().as_millis();
         cached.cache_hit = true;
         cached.cancelled = false;
@@ -332,14 +386,27 @@ fn scan_jsonl_inner(
 }
 
 fn cache_db_path() -> Result<std::path::PathBuf, String> {
-    let base =
-        std::env::current_dir().map_err(|err| format!("Failed to resolve current dir: {err}"))?;
-    Ok(base.join(".promptlens-cache.sqlite"))
+    if let Ok(path) = std::env::var("PROMPTLENS_CACHE_PATH") {
+        return Ok(std::path::PathBuf::from(path));
+    }
+    let base = dirs::data_local_dir()
+        .or_else(dirs::data_dir)
+        .ok_or_else(|| "Failed to resolve app data directory".to_string())?
+        .join("PromptLens");
+    fs::create_dir_all(&base).map_err(|err| format!("Failed to create cache directory: {err}"))?;
+    Ok(base.join("scan-cache.sqlite"))
 }
 
 fn open_cache() -> Result<Connection, String> {
     let conn =
         Connection::open(cache_db_path()?).map_err(|err| format!("Failed to open cache: {err}"))?;
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(|err| format!("Failed to read cache schema version: {err}"))?;
+    if version != 0 && version != CACHE_SCHEMA_VERSION {
+        conn.execute("DROP TABLE IF EXISTS scan_cache", [])
+            .map_err(|err| format!("Failed to reset old cache: {err}"))?;
+    }
     conn.execute(
         "CREATE TABLE IF NOT EXISTS scan_cache (
             file_path TEXT PRIMARY KEY,
@@ -351,6 +418,8 @@ fn open_cache() -> Result<Connection, String> {
         [],
     )
     .map_err(|err| format!("Failed to initialize cache: {err}"))?;
+    conn.pragma_update(None, "user_version", CACHE_SCHEMA_VERSION)
+        .map_err(|err| format!("Failed to update cache schema version: {err}"))?;
     Ok(conn)
 }
 
@@ -1086,6 +1155,9 @@ pub fn run() {
             open_file_dialog,
             scan_jsonl,
             cancel_scan,
+            clear_scan_cache,
+            get_cache_info,
+            get_file_status,
             read_record,
             search_jsonl,
             cancel_search
@@ -1225,6 +1297,8 @@ mod tests {
     #[test]
     fn scan_cache_round_trips_valid_scan() {
         let mut file = NamedTempFile::new().expect("temp file");
+        let cache_file = NamedTempFile::new().expect("cache file");
+        std::env::set_var("PROMPTLENS_CACHE_PATH", cache_file.path());
         writeln!(
             file,
             "{{\"id\":\"cached\",\"model\":\"gpt-4.1\",\"response\":\"ok\"}}"
@@ -1240,5 +1314,6 @@ mod tests {
         assert!(second.cache_hit);
         assert_eq!(second.valid_records, 1);
         assert_eq!(second.summaries[0].id, "cached");
+        std::env::remove_var("PROMPTLENS_CACHE_PATH");
     }
 }

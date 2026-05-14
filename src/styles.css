@@ -166,6 +166,13 @@ select {
   background: var(--danger);
 }
 
+.warning-banner {
+  padding: 9px 14px;
+  border-bottom: 1px solid #806734;
+  color: var(--text);
+  background: rgb(128 103 52 / 18%);
+}
+
 .progress-strip {
   display: grid;
   grid-template-columns: 160px minmax(0, 1fr) auto;

@@ -27,6 +27,9 @@ Implemented v0.3 local workspace foundation:
 - Provider fixtures and Rust tests for OpenAI, Anthropic, Gemini, and Ollama-style payloads
 - Multi-file workspace tabs with independent selection, detail, search, diff baseline, and timing state
 - SQLite summary cache for faster repeated opens when file path, size, and modified time are unchanged
+- Workspace tabs restore on app startup when source files still exist
+- Cache can be cleared from the toolbar
+- Active file changes on disk are detected and surfaced as a rescan warning
 
 ## Development
 
@@ -58,6 +61,7 @@ npm run tauri:dev
 6. Use the compare icon in the list to set a diff baseline, then select another record.
 7. Use scan/search cancel buttons when working with large files.
 8. Open multiple files to switch between workspace tabs without losing per-file state.
+9. Use the database button to clear the scan cache when needed.
 
 Build the frontend:
 

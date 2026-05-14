@@ -1,6 +1,6 @@
 [package]
 name = "promptlens"
-version = "0.3.0"
+version = "0.3.1"
 description = "Local-first LLM JSONL audit log viewer"
 authors = ["PromptLens"]
 license = ""
@@ -16,6 +16,7 @@ tauri-build = { version = "2.5.1", features = [] }
 
 [dependencies]
 base64 = "0.22.1"
+dirs = "6.0.0"
 infer = "0.19.0"
 rfd = "0.15.4"
 rusqlite = { version = "0.32.1", features = ["bundled"] }

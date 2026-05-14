@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Database,
   FileJson,
   FolderOpen,
   GitCompare,
@@ -21,9 +22,21 @@ import remarkGfm from "remark-gfm";
 import { copyJson, copyText, safeJson } from "../lib/clipboard";
 import { basename, formatBytes, formatJsonScalar, formatLatency, formatTime, formatTokens } from "../lib/format";
 import { loadRecentFiles, rememberRecentFile } from "../lib/recentFiles";
-import { cancelScan, cancelSearch, openFileDialog, readRecord, scanJsonl, searchJsonl } from "../tauri";
+import {
+  cancelScan,
+  cancelSearch,
+  clearScanCache,
+  getCacheInfo,
+  getFileStatus,
+  openFileDialog,
+  readRecord,
+  scanJsonl,
+  searchJsonl,
+} from "../tauri";
 import type {
+  CacheInfo,
   FileScanResult,
+  FileStatus,
   LogSummary,
   NormalizedContent,
   NormalizedMessage,
@@ -38,6 +51,7 @@ type RightTab = "metadata" | "diff" | "tools" | "error" | "raw" | "json" | "sear
 type Theme = "dark" | "light";
 
 const THEME_KEY = "promptlens.theme";
+const WORKSPACE_KEY = "promptlens.workspace";
 
 type WorkspaceTab = {
   id: string;
@@ -61,12 +75,15 @@ export function App() {
   const [tokensMin, setTokensMin] = useState("");
   const [rightTab, setRightTab] = useState<RightTab>("metadata");
   const [recentFiles, setRecentFiles] = useState<string[]>(() => loadRecentFiles());
+  const [restoredWorkspace, setRestoredWorkspace] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [scanProgress, setScanProgress] = useState<ProgressEvent | null>(null);
   const [searchProgress, setSearchProgress] = useState<ProgressEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cacheInfo, setCacheInfo] = useState<CacheInfo | null>(null);
+  const [fileStatus, setFileStatus] = useState<FileStatus | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
   const file = activeTab?.file ?? null;
@@ -168,8 +185,49 @@ export function App() {
     };
   }, []);
 
-  async function loadFile(path: string) {
-    setError(null);
+  useEffect(() => {
+    void getCacheInfo().then(setCacheInfo).catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (restoredWorkspace) return;
+    setRestoredWorkspace(true);
+    const saved = loadWorkspace();
+    if (!saved.paths.length) return;
+    void (async () => {
+      for (const path of saved.paths.slice(0, 8)) {
+        await loadFile(path, { quiet: true });
+      }
+      if (saved.activePath) setActiveTabId(saved.activePath);
+    })();
+  }, [restoredWorkspace]);
+
+  useEffect(() => {
+    if (!restoredWorkspace) return;
+    saveWorkspace(tabs.map((tab) => tab.file.filePath), activeTabId);
+  }, [activeTabId, restoredWorkspace, tabs]);
+
+  useEffect(() => {
+    if (!file) {
+      setFileStatus(null);
+      return;
+    }
+    let cancelled = false;
+    async function check() {
+      if (!file) return;
+      const status = await getFileStatus(file.filePath);
+      if (!cancelled) setFileStatus(status);
+    }
+    void check();
+    const timer = window.setInterval(check, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [file?.filePath, file?.fileSize, file?.modified]);
+
+  async function loadFile(path: string, options?: { quiet?: boolean }) {
+    if (!options?.quiet) setError(null);
     setLoading(true);
     setScanProgress(null);
     try {
@@ -180,7 +238,7 @@ export function App() {
         setError("Scan was cancelled. Partial results are shown.");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (!options?.quiet) setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
       setScanProgress(null);
@@ -238,6 +296,12 @@ export function App() {
   async function handleRescan() {
     if (!file) return;
     await loadFile(file.filePath);
+  }
+
+  async function handleClearCache() {
+    await clearScanCache();
+    setCacheInfo(await getCacheInfo());
+    setTabs((current) => current.map((tab) => ({ ...tab, file: { ...tab.file, cacheHit: false } })));
   }
 
   function handleCloseTab(tabId: string) {
@@ -299,6 +363,9 @@ export function App() {
         <button className="icon-button" onClick={handleRescan} disabled={!file || loading} title="Rescan active file">
           <RotateCw size={16} />
         </button>
+        <button className="icon-button" onClick={handleClearCache} title={cacheInfo?.path || "Clear cache"}>
+          <Database size={16} />
+        </button>
         <div className="search-box">
           <Search size={15} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter list" />
@@ -337,6 +404,11 @@ export function App() {
       </header>
 
       {error ? <div className="error-banner">{error}</div> : null}
+      {file && fileStatus && (!fileStatus.exists || fileStatus.fileSize !== file.fileSize || fileStatus.modified !== file.modified) ? (
+        <div className="warning-banner">
+          Active file changed on disk. Rescan to refresh summaries.
+        </div>
+      ) : null}
       {loading || searching || lastScanMs !== null || lastSearchMs !== null ? (
         <ProgressStrip
           loading={loading}
@@ -1096,6 +1168,24 @@ function compareSummary(a: LogSummary, b: LogSummary, key: SortKey) {
   if (key === "model") return (a.model ?? "").localeCompare(b.model ?? "");
   if (key === "status") return a.status.localeCompare(b.status);
   return (Date.parse(b.timestamp ?? "") || b.lineNumber) - (Date.parse(a.timestamp ?? "") || a.lineNumber);
+}
+
+function loadWorkspace(): { paths: string[]; activePath: string | null } {
+  try {
+    const raw = localStorage.getItem(WORKSPACE_KEY);
+    if (!raw) return { paths: [], activePath: null };
+    const parsed = JSON.parse(raw) as { paths?: string[]; activePath?: string | null };
+    return {
+      paths: Array.isArray(parsed.paths) ? parsed.paths : [],
+      activePath: parsed.activePath ?? null,
+    };
+  } catch {
+    return { paths: [], activePath: null };
+  }
+}
+
+function saveWorkspace(paths: string[], activePath: string | null) {
+  localStorage.setItem(WORKSPACE_KEY, JSON.stringify({ paths, activePath }));
 }
 
 function loadTheme(): Theme {
