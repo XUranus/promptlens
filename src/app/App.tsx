@@ -157,6 +157,7 @@ export function App() {
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
   const [fadeOut, setFadeOut] = useState(false);
+  const [recordLoading, setRecordLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [scanProgress, setScanProgress] = useState<ProgressEvent | null>(null);
   const [searchProgress, setSearchProgress] = useState<ProgressEvent | null>(null);
@@ -508,20 +509,26 @@ export function App() {
       detail: null,
       newLineNumbers: newLineNumbers.filter((lineNumber) => lineNumber !== summary.lineNumber),
     });
+    setRecordLoading(true);
     try {
       updateActiveTab({ detail: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRecordLoading(false);
     }
   }
 
   async function handleSetCompare(summary: LogSummary) {
     if (!file) return;
+    setRecordLoading(true);
     try {
       updateActiveTab({ compareBase: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
       setRightTab("diff");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRecordLoading(false);
     }
   }
 
@@ -628,6 +635,15 @@ export function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  function handleTabSwitch(tabId: string) {
+    if (tabId === activeTabId) return;
+    setRecordLoading(true);
+    setTimeout(() => {
+      setActiveTabId(tabId);
+      setTimeout(() => setRecordLoading(false), 200);
+    }, 0);
   }
 
   function handleCloseTab(tabId: string) {
@@ -808,7 +824,7 @@ export function App() {
       ) : null}
 
       {tabs.length > 0 ? (
-        <WorkspaceTabs tabs={tabs} activeTabId={activeTabId} onActivate={setActiveTabId} onClose={handleCloseTab} />
+        <WorkspaceTabs tabs={tabs} activeTabId={activeTabId} onActivate={handleTabSwitch} onClose={handleCloseTab} />
       ) : null}
 
       <section
@@ -866,8 +882,8 @@ export function App() {
         </aside>
       </section>
 
-      {!ready && (
-        <div className={`load-overlay${fadeOut ? " fade-out" : ""}`}>
+      {(!ready || recordLoading) && (
+        <div className={`load-overlay${ready && !recordLoading ? " fade-out" : ""}`}>
           <div className="spinner" />
         </div>
       )}
