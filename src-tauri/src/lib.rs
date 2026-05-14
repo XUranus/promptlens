@@ -207,6 +207,7 @@ enum NormalizedContent {
     },
     Image {
         mime: Option<String>,
+        #[serde(rename = "dataUrl")]
         data_url: Option<String>,
         base64: Option<String>,
     },
@@ -1122,13 +1123,45 @@ fn summary_from_value(
 }
 
 fn normalize_call(value: &Value, summary: &LogSummary) -> NormalizedCall {
-    let request_raw = value.get("request").cloned();
-    let response_raw = value.get("response").cloned();
+    let message_raw = value.get("message").cloned();
+    let message_role = message_raw
+        .as_ref()
+        .and_then(|message| message.get("role"))
+        .and_then(Value::as_str)
+        .map(normalize_role);
+    let request_raw = value.get("request").cloned().or_else(|| {
+        matches!(
+            message_role.as_deref(),
+            Some("user") | Some("system") | Some("developer")
+        )
+        .then(|| message_raw.clone())
+        .flatten()
+    });
+    let response_raw = value.get("response").cloned().or_else(|| {
+        matches!(
+            message_role.as_deref(),
+            Some("assistant") | Some("tool") | Some("function")
+        )
+        .then(|| message_raw.clone())
+        .flatten()
+    });
     let error_raw = value.get("error").cloned().filter(|error| !error.is_null());
     let provider = summary.provider.clone().or_else(|| detect_provider(value));
     let request_messages = request_raw
         .as_ref()
         .and_then(extract_messages)
+        .or_else(|| {
+            message_raw
+                .as_ref()
+                .filter(|_| {
+                    matches!(
+                        message_role.as_deref(),
+                        Some("user") | Some("system") | Some("developer")
+                    )
+                })
+                .and_then(normalize_message)
+                .map(|message| vec![message])
+        })
         .or_else(|| extract_messages(value));
     let response_messages = extract_response_messages(value);
     let response_text = response_messages.as_ref().and_then(|messages| {
@@ -1210,7 +1243,11 @@ fn extract_messages(value: &Value) -> Option<Vec<NormalizedMessage>> {
 }
 
 fn extract_response_messages(value: &Value) -> Option<Vec<NormalizedMessage>> {
-    if let Some(message) = value.get("message").and_then(normalize_message) {
+    if let Some(message) = value
+        .get("message")
+        .and_then(normalize_message)
+        .filter(|message| matches!(message.role.as_str(), "assistant" | "tool" | "function"))
+    {
         return Some(vec![message]);
     }
 
@@ -1368,6 +1405,17 @@ fn normalize_message(value: &Value) -> Option<NormalizedMessage> {
 }
 
 fn normalize_content_part(value: &Value) -> Vec<NormalizedContent> {
+    if let Value::String(text) = value {
+        if let Some((mime, data_url, base64)) = normalize_image_string(text) {
+            return vec![NormalizedContent::Image {
+                mime,
+                data_url,
+                base64,
+            }];
+        }
+        return vec![NormalizedContent::Text { text: text.clone() }];
+    }
+
     if let Some(inline_data) = value.get("inline_data").or_else(|| value.get("inlineData")) {
         if let Some(data) = inline_data.get("data").and_then(Value::as_str) {
             let mime = inline_data
@@ -1398,15 +1446,7 @@ fn normalize_content_part(value: &Value) -> Vec<NormalizedContent> {
         }
     }
 
-    if let Some(text) = value
-        .get("text")
-        .or_else(|| value.get("content"))
-        .and_then(Value::as_str)
-    {
-        return vec![NormalizedContent::Text {
-            text: text.to_string(),
-        }];
-    }
+    let mut content = Vec::new();
 
     if let Some(url) = value
         .get("image_url")
@@ -1418,12 +1458,34 @@ fn normalize_content_part(value: &Value) -> Vec<NormalizedContent> {
         .or_else(|| value.get("image_base64").and_then(Value::as_str))
     {
         if let Some((mime, data_url, base64)) = normalize_image_string(url) {
-            return vec![NormalizedContent::Image {
+            content.push(NormalizedContent::Image {
                 mime,
                 data_url,
                 base64,
-            }];
+            });
         }
+    }
+
+    if let Some(text) = value
+        .get("text")
+        .or_else(|| value.get("content"))
+        .and_then(Value::as_str)
+    {
+        if let Some((mime, data_url, base64)) = normalize_image_string(text) {
+            content.push(NormalizedContent::Image {
+                mime,
+                data_url,
+                base64,
+            });
+        } else {
+            content.push(NormalizedContent::Text {
+                text: text.to_string(),
+            });
+        }
+    }
+
+    if !content.is_empty() {
+        return content;
     }
 
     if matches!(
@@ -1745,6 +1807,49 @@ mod tests {
         let summary = summary_from_value(&value, 1, 0, None);
         assert!(summary.has_image);
         assert!(contains_image(&value));
+    }
+
+    #[test]
+    fn normalizes_mixed_text_and_image_content() {
+        let image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+        let value = json!({
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "inspect this"},
+                    {"type": "image_url", "image_url": {"url": image}}
+                ]
+            }
+        });
+        let normalized = normalize_call(&value, &summary_from_value(&value, 1, 0, None));
+        let content = &normalized.request.unwrap().messages.unwrap()[0].content;
+        assert!(matches!(content[0], NormalizedContent::Text { .. }));
+        assert!(matches!(content[1], NormalizedContent::Image { .. }));
+        let serialized = serde_json::to_value(&content[1]).unwrap();
+        assert!(serialized.get("dataUrl").is_some());
+        assert!(serialized.get("data_url").is_none());
+    }
+
+    #[test]
+    fn normalizes_claude_code_session_messages() {
+        let user = json!({
+            "type": "user",
+            "sessionId": "session-1",
+            "message": {"role": "user", "content": [{"type": "text", "text": "hello"}]}
+        });
+        let assistant = json!({
+            "type": "assistant",
+            "sessionId": "session-1",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "world"}]}
+        });
+        let user_normalized = normalize_call(&user, &summary_from_value(&user, 1, 0, None));
+        let assistant_normalized =
+            normalize_call(&assistant, &summary_from_value(&assistant, 2, 10, None));
+        assert!(user_normalized.request.unwrap().raw.is_some());
+        assert!(user_normalized.response.unwrap().messages.is_none());
+        let assistant_response = assistant_normalized.response.unwrap();
+        assert!(assistant_response.raw.is_some());
+        assert_eq!(assistant_response.messages.unwrap()[0].role, "assistant");
     }
 
     #[test]

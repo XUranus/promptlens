@@ -22,11 +22,13 @@ import {
   Moon,
   RotateCw,
   Search,
+  Settings,
   Sun,
   Users,
   Wrench,
   X,
 } from "lucide-react";
+import type { CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { copyJson, copyText, safeJson } from "../lib/clipboard";
@@ -114,6 +116,19 @@ type IssueRecord = {
 
 const THEME_KEY = "promptlens.theme";
 const WORKSPACE_KEY = "promptlens.workspace";
+const SETTINGS_KEY = "promptlens.settings";
+
+type AppSettings = {
+  fontFamily: string;
+  fontSize: number;
+  codeFontFamily: string;
+};
+
+const DEFAULT_SETTINGS: AppSettings = {
+  fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  fontSize: 13,
+  codeFontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+};
 
 const LEFT_MIN = 260;
 const LEFT_MAX = 560;
@@ -154,10 +169,12 @@ export function App() {
   const [recentFiles, setRecentFiles] = useState<string[]>(() => loadRecentFiles());
   const [restoredWorkspace, setRestoredWorkspace] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
+  const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
   const [fadeOut, setFadeOut] = useState(false);
-  const [recordLoading, setRecordLoading] = useState(false);
+  const [tabSwitching, setTabSwitching] = useState(false);
   const [searching, setSearching] = useState(false);
   const [scanProgress, setScanProgress] = useState<ProgressEvent | null>(null);
   const [searchProgress, setSearchProgress] = useState<ProgressEvent | null>(null);
@@ -251,6 +268,10 @@ export function App() {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  }, [settings]);
 
   // Overlay: show spinner while loading, fade out 500ms after load completes
   useEffect(() => {
@@ -509,26 +530,20 @@ export function App() {
       detail: null,
       newLineNumbers: newLineNumbers.filter((lineNumber) => lineNumber !== summary.lineNumber),
     });
-    setRecordLoading(true);
     try {
       updateActiveTab({ detail: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRecordLoading(false);
     }
   }
 
   async function handleSetCompare(summary: LogSummary) {
     if (!file) return;
-    setRecordLoading(true);
     try {
       updateActiveTab({ compareBase: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
       setRightTab("diff");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRecordLoading(false);
     }
   }
 
@@ -639,10 +654,10 @@ export function App() {
 
   function handleTabSwitch(tabId: string) {
     if (tabId === activeTabId) return;
-    setRecordLoading(true);
+    setTabSwitching(true);
     setTimeout(() => {
       setActiveTabId(tabId);
-      setTimeout(() => setRecordLoading(false), 200);
+      setTimeout(() => setTabSwitching(false), 200);
     }, 0);
   }
 
@@ -691,8 +706,24 @@ export function App() {
   return (
     <>
       <div className="app-bg-orbs" aria-hidden="true" />
-      <main className="app-shell">
-      <TitleBar theme={theme} onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")} />
+      <main
+        className="app-shell"
+        style={
+          {
+            "--app-font-family": settings.fontFamily,
+            "--app-font-size": `${settings.fontSize}px`,
+            "--code-font-family": settings.codeFontFamily,
+          } as CSSProperties
+        }
+      >
+      <TitleBar
+        theme={theme}
+        settings={settings}
+        settingsOpen={settingsOpen}
+        onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+        onToggleSettings={() => setSettingsOpen((open) => !open)}
+        onChangeSettings={setSettings}
+      />
       <header className="toolbar">
         <div className="brand">
           <svg width="24" height="24" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
@@ -882,8 +913,8 @@ export function App() {
         </aside>
       </section>
 
-      {(!ready || recordLoading) && (
-        <div className={`load-overlay${ready && !recordLoading ? " fade-out" : ""}`}>
+      {(!ready || tabSwitching) && (
+        <div className={`load-overlay${ready && !tabSwitching ? " fade-out" : ""}`}>
           <div className="spinner" />
         </div>
       )}
@@ -903,7 +934,21 @@ export function App() {
 
 const appWindow = getCurrentWindow();
 
-function TitleBar({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: () => void }) {
+function TitleBar({
+  theme,
+  settings,
+  settingsOpen,
+  onToggleTheme,
+  onToggleSettings,
+  onChangeSettings,
+}: {
+  theme: Theme;
+  settings: AppSettings;
+  settingsOpen: boolean;
+  onToggleTheme: () => void;
+  onToggleSettings: () => void;
+  onChangeSettings: (settings: AppSettings) => void;
+}) {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -939,10 +984,56 @@ function TitleBar({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: () =>
       </div>
       <div className="title-bar-drag" />
       <div className="title-bar-right" onMouseDown={(e) => e.stopPropagation()}>
+        <button className="icon-button tl-theme" onClick={onToggleSettings} title="Settings">
+          <Settings size={13} />
+        </button>
         <button className="icon-button tl-theme" onClick={onToggleTheme} title="Toggle theme">
           {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
         </button>
       </div>
+      {settingsOpen ? <SettingsMenu settings={settings} onChange={onChangeSettings} /> : null}
+    </div>
+  );
+}
+
+function SettingsMenu({
+  settings,
+  onChange,
+}: {
+  settings: AppSettings;
+  onChange: (settings: AppSettings) => void;
+}) {
+  return (
+    <div className="settings-menu" onMouseDown={(event) => event.stopPropagation()}>
+      <label>
+        <span>UI font</span>
+        <select value={settings.fontFamily} onChange={(event) => onChange({ ...settings, fontFamily: event.target.value })}>
+          <option value={DEFAULT_SETTINGS.fontFamily}>System</option>
+          <option value={'"Inter", ui-sans-serif, system-ui, sans-serif'}>Inter</option>
+          <option value={'"SF Pro Text", -apple-system, BlinkMacSystemFont, sans-serif'}>SF Pro</option>
+          <option value={'Arial, Helvetica, sans-serif'}>Arial</option>
+        </select>
+      </label>
+      <label>
+        <span>Font size</span>
+        <input
+          type="number"
+          min={11}
+          max={18}
+          value={settings.fontSize}
+          onChange={(event) => onChange({ ...settings, fontSize: Number(event.target.value) || DEFAULT_SETTINGS.fontSize })}
+        />
+      </label>
+      <label>
+        <span>Code font</span>
+        <select value={settings.codeFontFamily} onChange={(event) => onChange({ ...settings, codeFontFamily: event.target.value })}>
+          <option value={DEFAULT_SETTINGS.codeFontFamily}>System mono</option>
+          <option value={'"JetBrains Mono", ui-monospace, monospace'}>JetBrains Mono</option>
+          <option value={'"Fira Code", ui-monospace, monospace'}>Fira Code</option>
+          <option value={'Menlo, Monaco, Consolas, monospace'}>Menlo</option>
+        </select>
+      </label>
+      <button onClick={() => onChange(DEFAULT_SETTINGS)}>Reset fonts</button>
     </div>
   );
 }
@@ -1186,7 +1277,7 @@ function MessageCard({
       </div>
       <div className={`message-content ${expanded ? "expanded" : ""}`}>
         {raw ? (
-          <pre className="code-block">{safeJson(message.raw ?? message.content)}</pre>
+          <JsonCode value={message.raw ?? message.content} />
         ) : (
           message.content.map((content, index) => (
             <ContentBlock key={index} content={content} onImagePreview={onImagePreview} />
@@ -1211,21 +1302,22 @@ function ContentBlock({
       </div>
     );
   }
-  if (content.type === "image" && content.dataUrl) {
+  if (content.type === "image" && (content.dataUrl || content.data_url)) {
+    const src = content.dataUrl || content.data_url || "";
     return (
-      <button className="image-thumb" onClick={() => onImagePreview(content.dataUrl!)}>
-        <img className="preview-image" src={content.dataUrl} alt="Embedded prompt content" />
+      <button className="image-thumb" onClick={() => onImagePreview(src)}>
+        <img className="preview-image" src={src} alt="Embedded prompt content" />
         <span>{content.mime || "image"}</span>
       </button>
     );
   }
   if (content.type === "tool_call") {
-    return <pre className="code-block">{safeJson({ name: content.name, arguments: content.arguments })}</pre>;
+    return <JsonCode value={{ name: content.name, arguments: content.arguments }} />;
   }
   if (content.type === "tool_result") {
-    return <pre className="code-block">{safeJson({ name: content.name, result: content.result })}</pre>;
+    return <JsonCode value={{ name: content.name, result: content.result }} />;
   }
-  return <pre className="code-block">{safeJson(content)}</pre>;
+  return <JsonCode value={content} />;
 }
 
 function RightPanel({
@@ -1667,9 +1759,9 @@ function ToolCallsView({ detail }: { detail: RecordDetail | null }) {
         </button>
       </div>
       <h3>Tool Calls</h3>
-      <pre className="code-block">{safeJson(toolCalls ?? [])}</pre>
+      <JsonCode value={toolCalls ?? []} />
       <h3>Tool Results</h3>
-      <pre className="code-block">{safeJson(toolResults)}</pre>
+      <JsonCode value={toolResults} />
     </div>
   );
 }
@@ -1685,15 +1777,15 @@ function ErrorView({ detail }: { detail: RecordDetail | null }) {
           Copy error
         </button>
       </div>
-      <pre className="code-block">{safeJson(error ?? "No error on this record.")}</pre>
+      <JsonCode value={error ?? "No error on this record."} />
     </div>
   );
 }
 
 function RawPayloadView({ detail }: { detail: RecordDetail | null }) {
   if (!detail) return <div className="empty-state">Raw request and response will appear here.</div>;
-  const request = detail.normalized?.request?.raw;
-  const response = detail.normalized?.response?.raw;
+  const request = detail.normalized?.request?.raw ?? detail.normalized?.request?.messages ?? detail.raw;
+  const response = detail.normalized?.response?.raw ?? detail.normalized?.response?.messages ?? detail.normalized?.response?.text;
   const assistantText = detail.normalized?.response?.text;
   return (
     <div className="debug-view">
@@ -1712,9 +1804,9 @@ function RawPayloadView({ detail }: { detail: RecordDetail | null }) {
         </button>
       </div>
       <h3>Raw Request</h3>
-      <pre className="code-block">{safeJson(request ?? "No request payload found.")}</pre>
+      <JsonCode value={request ?? "No request payload found."} />
       <h3>Raw Response</h3>
-      <pre className="code-block">{safeJson(response ?? "No response payload found.")}</pre>
+      <JsonCode value={response ?? "No response payload found."} />
     </div>
   );
 }
@@ -1761,6 +1853,10 @@ function KeyValue({ label, value }: { label: string; value: unknown }) {
   );
 }
 
+function JsonCode({ value }: { value: unknown }) {
+  return <pre className="code-block json-code">{highlightJson(safeJson(value))}</pre>;
+}
+
 function JsonTreeView({ detail }: { detail: RecordDetail | null }) {
   const [jsonQuery, setJsonQuery] = useState("");
   if (!detail) return <div className="empty-state">JSON Tree will appear here.</div>;
@@ -1786,7 +1882,8 @@ function JsonTreeView({ detail }: { detail: RecordDetail | null }) {
 function JsonNode({ name, value, path, query }: { name: string; value: unknown; path: string; query: string }) {
   const isContainer = value !== null && typeof value === "object";
   const isLongString = typeof value === "string" && value.length > 220;
-  const isBase64 = typeof value === "string" && (value.startsWith("data:image/") || value.length > 1000);
+  const imageDataUrl = typeof value === "string" ? imageDataUrlFromString(value) : null;
+  const isBase64 = typeof value === "string" && (imageDataUrl !== null || value.length > 1000);
   const matchesQuery = !query || jsonNodeMatches(name, value, query);
   const [open, setOpen] = useState(!isBase64 && path.split(".").length < 3);
 
@@ -1796,7 +1893,8 @@ function JsonNode({ name, value, path, query }: { name: string; value: unknown; 
     return (
       <div className="json-leaf">
         <span className="json-key">{name}</span>
-        <span className="json-value">{formatJsonScalar(value, isLongString || isBase64)}</span>
+        <span className={`json-value json-${jsonScalarClass(value)}`}>{formatJsonScalar(value, isLongString || isBase64)}</span>
+        {imageDataUrl ? <img className="json-inline-image" src={imageDataUrl} alt="JSON embedded content" /> : null}
         <button onClick={() => copyText(String(value ?? ""))} title="Copy value">
           <Copy size={13} />
         </button>
@@ -1884,6 +1982,56 @@ function jsonNodeMatches(name: string, value: unknown, query: string): boolean {
   }
   if (Array.isArray(value)) return value.some((item) => jsonNodeMatches("", item, query));
   return Object.entries(value).some(([key, child]) => jsonNodeMatches(key, child, query));
+}
+
+function highlightJson(json: string) {
+  const tokenPattern = /("(?:\\.|[^"\\])*"(?=\s*:))|("(?:\\.|[^"\\])*")|\b(true|false)\b|\b(null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
+  const nodes: Array<string | JSX.Element> = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(json))) {
+    if (match.index > lastIndex) nodes.push(json.slice(lastIndex, match.index));
+    const [token, key, stringValue, booleanValue, nullValue, numberValue] = match;
+    const className = key
+      ? "json-token-key"
+      : stringValue
+        ? "json-token-string"
+        : booleanValue
+          ? "json-token-boolean"
+          : nullValue
+            ? "json-token-null"
+            : numberValue
+              ? "json-token-number"
+              : "";
+    nodes.push(
+      <span key={`${match.index}-${token}`} className={className}>
+        {token}
+      </span>,
+    );
+    lastIndex = match.index + token.length;
+  }
+  if (lastIndex < json.length) nodes.push(json.slice(lastIndex));
+  return nodes;
+}
+
+function jsonScalarClass(value: unknown) {
+  if (value === null) return "null";
+  if (typeof value === "string") return "string";
+  if (typeof value === "number") return "number";
+  if (typeof value === "boolean") return "boolean";
+  return "unknown";
+}
+
+function imageDataUrlFromString(value: string): string | null {
+  if (value.startsWith("data:image/") && value.includes(";base64,")) return value;
+  const compact = value.replace(/[\r\n\s]/g, "");
+  if (compact.length < 128 || compact.length > 8 * 1024 * 1024) return null;
+  if (!/^[A-Za-z0-9+/=_-]+$/.test(compact)) return null;
+  if (compact.startsWith("iVBOR")) return `data:image/png;base64,${compact}`;
+  if (compact.startsWith("/9j/")) return `data:image/jpeg;base64,${compact}`;
+  if (compact.startsWith("R0lGOD")) return `data:image/gif;base64,${compact}`;
+  if (compact.startsWith("UklGR")) return `data:image/webp;base64,${compact}`;
+  return null;
 }
 
 function SearchPanel({
@@ -2189,6 +2337,24 @@ function saveWorkspace(paths: string[], activePath: string | null) {
 
 function loadTheme(): Theme {
   return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+}
+
+function loadSettings(): AppSettings {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return DEFAULT_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    return {
+      fontFamily: parsed.fontFamily || DEFAULT_SETTINGS.fontFamily,
+      fontSize:
+        typeof parsed.fontSize === "number" && parsed.fontSize >= 11 && parsed.fontSize <= 18
+          ? parsed.fontSize
+          : DEFAULT_SETTINGS.fontSize,
+      codeFontFamily: parsed.codeFontFamily || DEFAULT_SETTINGS.codeFontFamily,
+    };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
 }
 
 function formatDuration(value: number | null) {

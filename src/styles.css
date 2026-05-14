@@ -192,6 +192,8 @@ select {
   height: 100vh;
   background: var(--app-bg);
   color: var(--text-primary);
+  font-family: var(--app-font-family, Inter, ui-sans-serif, system-ui, sans-serif);
+  font-size: var(--app-font-size, 13px);
 }
 
 /* ============================================================
@@ -269,6 +271,37 @@ select {
 .tl-theme {
   width: 26px;
   height: 26px;
+}
+
+.settings-menu {
+  position: absolute;
+  top: 36px;
+  right: 12px;
+  z-index: 20;
+  display: grid;
+  gap: 10px;
+  width: 260px;
+  padding: 12px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 14px;
+  background: var(--glass-bg-strong);
+  box-shadow: var(--glass-shadow-lg);
+  backdrop-filter: var(--blur-lg) saturate(180%);
+  -webkit-backdrop-filter: var(--blur-lg) saturate(180%);
+  -webkit-app-region: no-drag;
+}
+
+.settings-menu label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.settings-menu select,
+.settings-menu input,
+.settings-menu button {
+  width: 100%;
 }
 
 /* ============================================================
@@ -1104,7 +1137,7 @@ body.resizing * {
   background: var(--code-bg);
   border: 1px solid var(--glass-border);
   font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--code-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
 }
 
 .markdown code {
@@ -1112,6 +1145,34 @@ body.resizing * {
   padding: 2px 5px;
   background: var(--code-bg);
   font-size: 12px;
+}
+
+.json-code {
+  white-space: pre-wrap;
+}
+
+.json-token-key {
+  color: #7cc4f7;
+}
+
+.json-token-string,
+.json-string {
+  color: #9bd88f;
+}
+
+.json-token-number,
+.json-number {
+  color: #f8c77e;
+}
+
+.json-token-boolean,
+.json-boolean {
+  color: #c69cff;
+}
+
+.json-token-null,
+.json-null {
+  color: var(--text-tertiary);
 }
 
 /* ============================================================
@@ -1656,6 +1717,15 @@ body.resizing * {
 .json-leaf button + button {
   margin-left: 0;
   padding: 2px 5px;
+}
+
+.json-inline-image {
+  max-width: 120px;
+  max-height: 80px;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  object-fit: contain;
+  background: var(--glass-bg-subtle);
 }
 
 .json-query {

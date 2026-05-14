@@ -48,7 +48,7 @@ export type IncrementalScanResult = {
 
 export type NormalizedContent =
   | { type: "text"; text: string }
-  | { type: "image"; mime?: string; dataUrl?: string; base64?: string }
+  | { type: "image"; mime?: string; dataUrl?: string; data_url?: string; base64?: string }
   | { type: "tool_call"; name?: string; arguments?: unknown }
   | { type: "tool_result"; name?: string; result?: unknown }
   | { type: "unknown"; raw: unknown };
