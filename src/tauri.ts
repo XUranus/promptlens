@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AgentSessionResult,
   CacheInfo,
   FileScanResult,
   FileStatus,
@@ -59,6 +60,10 @@ export async function readRecord(
   lineNumber: number,
 ): Promise<RecordDetail> {
   return invoke("read_record", { filePath, byteOffset, lineNumber });
+}
+
+export async function readAgentSession(filePath: string): Promise<AgentSessionResult> {
+  return invoke("read_agent_session", { filePath });
 }
 
 export async function searchJsonl(filePath: string, query: string): Promise<SearchResponse> {

@@ -86,3 +86,12 @@ Current Linux bundle targets are `deb` and `rpm`. AppImage should be re-enabled 
 - Run `npm run build`, `cd src-tauri && cargo fmt --check && cargo test`, and `npm run tauri -- build`.
 - Confirm local Linux bundle output remains `deb` and `rpm`.
 - Confirm GitHub Actions workflow uses platform-specific bundle targets for macOS, Linux, and Windows.
+
+## v0.6.0 Agent Session Viewer Foundation
+
+- Open a Claude Code session JSONL and verify user/assistant messages appear in Agent Timeline.
+- Open a Codex-style session JSONL and verify shell/tool events are classified.
+- Verify file edit/tool events populate Agent Files with jump-back navigation.
+- Select Timeline and Agent Files rows and confirm the center record jumps by line number and byte offset.
+- Append rows to the active file, load appended records, and confirm Agent Timeline refreshes.
+- Run `npm run build` and `cd src-tauri && cargo fmt --check && cargo test`.

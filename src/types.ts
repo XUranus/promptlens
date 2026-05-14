@@ -135,3 +135,44 @@ export type FileStatus = {
   fileSize?: number;
   modified?: string;
 };
+
+export type AgentEventType =
+  | "user_message"
+  | "assistant_message"
+  | "tool_call"
+  | "tool_result"
+  | "shell_command"
+  | "file_edit"
+  | "plan_update"
+  | "reasoning"
+  | "error"
+  | "system"
+  | "unknown";
+
+export type AgentEvent = {
+  id: string;
+  lineNumber: number;
+  byteOffset: number;
+  timestamp?: string;
+  sessionId?: string;
+  turnId?: string;
+  parentId?: string;
+  role?: string;
+  eventType: AgentEventType | string;
+  provider?: string;
+  toolName?: string;
+  command?: string;
+  filePaths: string[];
+  status?: string;
+  durationMs?: number;
+  preview?: string;
+  text?: string;
+  raw: unknown;
+};
+
+export type AgentSessionResult = {
+  filePath: string;
+  totalEvents: number;
+  sessions: string[];
+  events: AgentEvent[];
+};

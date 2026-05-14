@@ -5,7 +5,7 @@ use adapters::{detect_provider, normalize_role};
 use parser::image_detector::normalize_image_string;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     collections::HashSet,
     fs::{self, File},
@@ -133,6 +133,38 @@ struct FileStatus {
     exists: bool,
     file_size: Option<u64>,
     modified: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentSessionResult {
+    file_path: String,
+    total_events: usize,
+    sessions: Vec<String>,
+    events: Vec<AgentEvent>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct AgentEvent {
+    id: String,
+    line_number: usize,
+    byte_offset: u64,
+    timestamp: Option<String>,
+    session_id: Option<String>,
+    turn_id: Option<String>,
+    parent_id: Option<String>,
+    role: Option<String>,
+    event_type: String,
+    provider: Option<String>,
+    tool_name: Option<String>,
+    command: Option<String>,
+    file_paths: Vec<String>,
+    status: Option<String>,
+    duration_ms: Option<u64>,
+    preview: Option<String>,
+    text: Option<String>,
+    raw: Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -903,6 +935,57 @@ fn cancel_search(state: State<AppState>) {
     state.cancel_search.store(true, Ordering::Relaxed);
 }
 
+#[tauri::command]
+fn read_agent_session(file_path: String) -> Result<AgentSessionResult, String> {
+    let file = File::open(&file_path).map_err(|err| format!("Failed to open file: {err}"))?;
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    let mut line_number = 0usize;
+    let mut byte_offset = 0u64;
+    let mut events = Vec::new();
+    let mut sessions = HashSet::new();
+
+    loop {
+        line.clear();
+        let bytes = reader
+            .read_line(&mut line)
+            .map_err(|err| format!("Failed to read file: {err}"))?;
+        if bytes == 0 {
+            break;
+        }
+        line_number += 1;
+        let trimmed = line.trim_end_matches(['\n', '\r']);
+        if trimmed.trim().is_empty() {
+            byte_offset += bytes as u64;
+            continue;
+        }
+
+        let value = match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => value,
+            Err(err) => json!({
+                "parse_error": err.to_string(),
+                "raw": trimmed,
+            }),
+        };
+        let event = agent_event_from_value(value, line_number, byte_offset);
+        if let Some(session_id) = &event.session_id {
+            sessions.insert(session_id.clone());
+        }
+        events.push(event);
+        byte_offset += bytes as u64;
+    }
+
+    let mut sessions = sessions.into_iter().collect::<Vec<_>>();
+    sessions.sort();
+
+    Ok(AgentSessionResult {
+        file_path,
+        total_events: events.len(),
+        sessions,
+        events,
+    })
+}
+
 fn search_jsonl_inner(
     file_path: String,
     query: String,
@@ -1665,6 +1748,409 @@ fn contains_image(value: &Value) -> bool {
     }
 }
 
+fn agent_event_from_value(value: Value, line_number: usize, byte_offset: u64) -> AgentEvent {
+    let timestamp = first_string(
+        &value,
+        &["timestamp", "created_at", "createdAt", "time", "ts", "date"],
+    );
+    let session_id = first_string(
+        &value,
+        &[
+            "session_id",
+            "sessionId",
+            "conversation_id",
+            "conversationId",
+            "thread_id",
+            "threadId",
+            "chat_id",
+            "chatId",
+        ],
+    );
+    let turn_id = first_string(
+        &value,
+        &[
+            "turn_id",
+            "turnId",
+            "request_id",
+            "requestId",
+            "message_id",
+            "messageId",
+            "id",
+            "uuid",
+        ],
+    );
+    let parent_id = first_string(
+        &value,
+        &[
+            "parent_id",
+            "parentId",
+            "parent_uuid",
+            "parentUuid",
+            "parent_message_id",
+            "parentMessageId",
+        ],
+    );
+    let role = agent_role(&value);
+    let tool_name = agent_tool_name(&value);
+    let command = agent_command(&value);
+    let text = agent_text(&value);
+    let file_paths = agent_file_paths(&value);
+    let status = first_string(&value, &["status", "state", "outcome"]);
+    let duration_ms = first_u64(
+        &value,
+        &["duration_ms", "durationMs", "elapsed_ms", "elapsedMs"],
+    );
+    let provider = agent_provider(&value);
+    let event_type = detect_agent_event_type(
+        &value,
+        role.as_deref(),
+        tool_name.as_deref(),
+        command.as_deref(),
+        &file_paths,
+    );
+    let preview = text
+        .clone()
+        .or_else(|| command.clone())
+        .or_else(|| tool_name.clone())
+        .or_else(|| file_paths.first().cloned())
+        .or_else(|| find_preview(&value))
+        .map(|preview| {
+            preview
+                .chars()
+                .take(240)
+                .collect::<String>()
+                .replace('\n', " ")
+        });
+    let id = turn_id
+        .clone()
+        .unwrap_or_else(|| format!("agent-line-{line_number}-{byte_offset}"));
+
+    AgentEvent {
+        id,
+        line_number,
+        byte_offset,
+        timestamp,
+        session_id,
+        turn_id,
+        parent_id,
+        role,
+        event_type,
+        provider,
+        tool_name,
+        command,
+        file_paths,
+        status,
+        duration_ms,
+        preview,
+        text,
+        raw: value,
+    }
+}
+
+fn detect_agent_event_type(
+    value: &Value,
+    role: Option<&str>,
+    tool_name: Option<&str>,
+    command: Option<&str>,
+    file_paths: &[String],
+) -> String {
+    if value.get("parse_error").is_some()
+        || value
+            .get("error")
+            .is_some_and(|error| !error.is_null() && error != "")
+    {
+        return "error".to_string();
+    }
+
+    let lowered_type = first_string(value, &["type", "event", "kind", "event_type", "eventType"])
+        .unwrap_or_default()
+        .to_lowercase();
+    if lowered_type.contains("tool_result")
+        || lowered_type.contains("tool_result_delta")
+        || lowered_type.contains("function_result")
+        || matches!(role, Some("tool") | Some("function"))
+    {
+        return "tool_result".to_string();
+    }
+    if lowered_type.contains("tool")
+        || lowered_type.contains("function_call")
+        || tool_name.is_some()
+        || contains_key(value, &["tool_calls", "toolCalls", "tool_use", "toolUse"])
+    {
+        if command.is_some() || tool_name.is_some_and(is_shell_tool) {
+            return "shell_command".to_string();
+        }
+        if !file_paths.is_empty() || tool_name.is_some_and(is_file_tool) {
+            return "file_edit".to_string();
+        }
+        return "tool_call".to_string();
+    }
+    if lowered_type.contains("command") || command.is_some() {
+        return "shell_command".to_string();
+    }
+    if lowered_type.contains("edit")
+        || lowered_type.contains("patch")
+        || lowered_type.contains("file")
+    {
+        return "file_edit".to_string();
+    }
+    if lowered_type.contains("reason") || lowered_type.contains("thinking") {
+        return "reasoning".to_string();
+    }
+    if lowered_type.contains("plan") {
+        return "plan_update".to_string();
+    }
+    match role {
+        Some("user") => "user_message".to_string(),
+        Some("assistant") => "assistant_message".to_string(),
+        Some("system") | Some("developer") => "system".to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+fn agent_role(value: &Value) -> Option<String> {
+    if let Some(role) = value
+        .get("message")
+        .and_then(|message| message.get("role"))
+        .and_then(Value::as_str)
+        .or_else(|| value.get("role").and_then(Value::as_str))
+        .or_else(|| value.get("speaker").and_then(Value::as_str))
+        .or_else(|| value.get("author").and_then(Value::as_str))
+        .or_else(|| {
+            value
+                .get("author")
+                .and_then(|author| author.get("role"))
+                .and_then(Value::as_str)
+        })
+        .or_else(|| value.get("type").and_then(Value::as_str))
+    {
+        let normalized = normalize_role(role);
+        if normalized != "unknown" {
+            return Some(normalized);
+        }
+    }
+    None
+}
+
+fn agent_provider(value: &Value) -> Option<String> {
+    first_string(value, &["provider", "source", "agent", "app"])
+        .map(|provider| provider.to_lowercase())
+        .or_else(|| {
+            let raw = value.to_string().to_lowercase();
+            if raw.contains("claude_code") || raw.contains("claude-code") {
+                Some("claude_code".to_string())
+            } else if raw.contains("opencode") {
+                Some("opencode".to_string())
+            } else if raw.contains("openclaw") || raw.contains("opwnclaw") {
+                Some("openclaw".to_string())
+            } else if raw.contains("\"codex\"") || raw.contains("exec_command") {
+                Some("codex".to_string())
+            } else if value.get("sessionId").is_some() && value.get("message").is_some() {
+                Some("claude_code".to_string())
+            } else {
+                detect_provider(value)
+            }
+        })
+}
+
+fn agent_tool_name(value: &Value) -> Option<String> {
+    first_string(
+        value,
+        &[
+            "tool_name",
+            "toolName",
+            "tool",
+            "name",
+            "function_name",
+            "functionName",
+        ],
+    )
+    .or_else(|| {
+        value
+            .get("function")
+            .and_then(|function| function.get("name"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    })
+    .or_else(|| {
+        value
+            .get("message")
+            .and_then(|message| message.get("tool_calls"))
+            .or_else(|| value.get("tool_calls"))
+            .and_then(Value::as_array)
+            .and_then(|calls| calls.first())
+            .and_then(|call| {
+                call.get("function")
+                    .and_then(|function| function.get("name"))
+                    .or_else(|| call.get("name"))
+            })
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    })
+    .or_else(|| {
+        value
+            .get("toolUse")
+            .or_else(|| value.get("tool_use"))
+            .and_then(|tool| tool.get("name"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    })
+}
+
+fn agent_command(value: &Value) -> Option<String> {
+    first_string(
+        value,
+        &[
+            "command",
+            "cmd",
+            "shell_command",
+            "shellCommand",
+            "bash",
+            "script",
+        ],
+    )
+    .or_else(|| {
+        find_first_key(
+            value,
+            &[
+                "arguments",
+                "args",
+                "input",
+                "parameters",
+                "tool_input",
+                "toolInput",
+            ],
+        )
+        .and_then(|input| first_string(input, &["cmd", "command", "shell_command", "shellCommand"]))
+    })
+}
+
+fn agent_text(value: &Value) -> Option<String> {
+    if let Some(message) = value.get("message") {
+        if let Some(text) = message.get("content").and_then(agent_text_from_content) {
+            return Some(text);
+        }
+    }
+    for key in [
+        "content",
+        "text",
+        "delta",
+        "output",
+        "result",
+        "summary",
+        "reasoning",
+        "thinking",
+        "assistant_response",
+        "assistantResponse",
+    ] {
+        if let Some(text) = value.get(key).and_then(agent_text_from_content) {
+            return Some(text);
+        }
+    }
+    None
+}
+
+fn agent_text_from_content(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(items) => {
+            let parts = items
+                .iter()
+                .filter_map(agent_text_from_content)
+                .collect::<Vec<_>>();
+            (!parts.is_empty()).then(|| parts.join("\n"))
+        }
+        Value::Object(map) => map
+            .get("text")
+            .or_else(|| map.get("content"))
+            .or_else(|| map.get("message"))
+            .or_else(|| map.get("result"))
+            .and_then(agent_text_from_content),
+        _ => None,
+    }
+}
+
+fn agent_file_paths(value: &Value) -> Vec<String> {
+    let mut paths = Vec::new();
+    collect_agent_file_paths(value, None, &mut paths);
+    paths.sort();
+    paths.dedup();
+    paths.truncate(16);
+    paths
+}
+
+fn collect_agent_file_paths(value: &Value, key_hint: Option<&str>, paths: &mut Vec<String>) {
+    if paths.len() >= 32 {
+        return;
+    }
+    match value {
+        Value::String(text) => {
+            if key_hint.is_some_and(is_file_path_key) && looks_like_file_path(text) {
+                paths.push(text.to_string());
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_agent_file_paths(item, key_hint, paths);
+            }
+        }
+        Value::Object(map) => {
+            for (key, child) in map {
+                collect_agent_file_paths(child, Some(key), paths);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_file_path_key(key: &str) -> bool {
+    matches!(
+        key,
+        "path"
+            | "file"
+            | "files"
+            | "file_path"
+            | "filePath"
+            | "filepath"
+            | "target_file"
+            | "targetFile"
+            | "absolute_path"
+            | "absolutePath"
+    )
+}
+
+fn looks_like_file_path(value: &str) -> bool {
+    if value.starts_with("http://") || value.starts_with("https://") || value.starts_with("data:") {
+        return false;
+    }
+    value.starts_with('/')
+        || value.starts_with("./")
+        || value.starts_with("../")
+        || value.contains('\\')
+        || value
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.contains('.'))
+}
+
+fn is_shell_tool(tool_name: &str) -> bool {
+    let lowered = tool_name.to_lowercase();
+    lowered.contains("bash")
+        || lowered.contains("shell")
+        || lowered.contains("terminal")
+        || lowered.contains("exec")
+        || lowered.contains("command")
+}
+
+fn is_file_tool(tool_name: &str) -> bool {
+    let lowered = tool_name.to_lowercase();
+    lowered.contains("edit")
+        || lowered.contains("patch")
+        || lowered.contains("write")
+        || lowered.contains("read")
+        || lowered.contains("file")
+}
+
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -1679,6 +2165,7 @@ pub fn run() {
             save_text_file,
             export_records,
             read_record,
+            read_agent_session,
             search_jsonl,
             cancel_search
         ])
@@ -1850,6 +2337,67 @@ mod tests {
         let assistant_response = assistant_normalized.response.unwrap();
         assert!(assistant_response.raw.is_some());
         assert_eq!(assistant_response.messages.unwrap()[0].role, "assistant");
+    }
+
+    #[test]
+    fn parses_agent_session_events() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "type": "user",
+                "sessionId": "agent-session-1",
+                "message": {"role": "user", "content": [{"type": "text", "text": "open the file"}]}
+            })
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "type": "assistant",
+                "sessionId": "agent-session-1",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "I'll inspect it."}]}
+            })
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "type": "tool_call",
+                "sessionId": "agent-session-1",
+                "name": "exec_command",
+                "input": {"cmd": "sed -n '1,20p' src/app/App.tsx"}
+            })
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "type": "tool_call",
+                "sessionId": "agent-session-1",
+                "name": "apply_patch",
+                "input": {"target_file": "src/app/App.tsx"}
+            })
+        )
+        .unwrap();
+
+        let result = read_agent_session(file.path().to_string_lossy().to_string()).unwrap();
+
+        assert_eq!(result.total_events, 4);
+        assert_eq!(result.sessions, vec!["agent-session-1"]);
+        assert_eq!(result.events[0].event_type, "user_message");
+        assert_eq!(result.events[1].event_type, "assistant_message");
+        assert_eq!(result.events[2].event_type, "shell_command");
+        assert_eq!(
+            result.events[2].command.as_deref(),
+            Some("sed -n '1,20p' src/app/App.tsx")
+        );
+        assert_eq!(result.events[3].event_type, "file_edit");
+        assert_eq!(result.events[3].file_paths, vec!["src/app/App.tsx"]);
     }
 
     #[test]

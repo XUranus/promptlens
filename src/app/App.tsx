@@ -24,6 +24,7 @@ import {
   Search,
   Settings,
   Sun,
+  Terminal,
   Users,
   Wrench,
   X,
@@ -42,6 +43,7 @@ import {
   getCacheInfo,
   getFileStatus,
   openFileDialog,
+  readAgentSession,
   readRecord,
   saveTextFile,
   scanJsonl,
@@ -49,6 +51,8 @@ import {
   searchJsonl,
 } from "../tauri";
 import type {
+  AgentEvent,
+  AgentSessionResult,
   CacheInfo,
   FileScanResult,
   FileStatus,
@@ -65,6 +69,8 @@ type SortKey = "time" | "latency" | "tokens" | "model" | "status";
 type RightTab =
   | "metadata"
   | "trace"
+  | "timeline"
+  | "agentFiles"
   | "sessions"
   | "analytics"
   | "issues"
@@ -152,6 +158,7 @@ type WorkspaceTab = {
   issueOnly: boolean;
   traceFilter: string;
   lastSearchIndexed: boolean | null;
+  agentSession: AgentSessionResult | null;
   newLineNumbers: number[];
   lastScanMs: number | null;
   lastSearchMs: number | null;
@@ -198,6 +205,7 @@ export function App() {
   const issueOnly = activeTab?.issueOnly ?? false;
   const traceFilter = activeTab?.traceFilter ?? "";
   const lastSearchIndexed = activeTab?.lastSearchIndexed ?? null;
+  const agentSession = activeTab?.agentSession ?? null;
   const newLineNumbers = activeTab?.newLineNumbers ?? [];
   const lastScanMs = activeTab?.lastScanMs ?? null;
   const lastSearchMs = activeTab?.lastSearchMs ?? null;
@@ -241,6 +249,7 @@ export function App() {
 
   async function createTabFromScan(result: FileScanResult) {
     const first = result.summaries[0] ?? null;
+    const agentSession = await readAgentSession(result.filePath).catch(() => null);
     const newTab: WorkspaceTab = {
       id: result.filePath,
       file: result,
@@ -255,6 +264,7 @@ export function App() {
       issueOnly: false,
       traceFilter: "",
       lastSearchIndexed: null,
+      agentSession,
       newLineNumbers: [],
       lastScanMs: result.durationMs,
       lastSearchMs: null,
@@ -587,6 +597,7 @@ export function App() {
     try {
       const result = await scanJsonlIncremental(file.filePath, file.fileSize, file.totalLines);
       const appendedLines = result.summaries.map((summary) => summary.lineNumber);
+      const nextAgentSession = await readAgentSession(file.filePath).catch(() => activeTab?.agentSession ?? null);
       updateActiveTab({
         file: {
           ...file,
@@ -600,6 +611,7 @@ export function App() {
           summaries: [...file.summaries, ...result.summaries],
         },
         lastScanMs: result.durationMs,
+        agentSession: nextAgentSession,
         newLineNumbers: [...newLineNumbers, ...appendedLines],
       });
       setFileStatus({ exists: true, fileSize: result.fileSize, modified: result.modified });
@@ -894,6 +906,7 @@ export function App() {
             compareBase={compareBase}
             file={file}
             filtered={filtered}
+            agentSession={agentSession}
             sessions={sessions}
             analytics={analytics}
             issues={issues}
@@ -1327,6 +1340,7 @@ function RightPanel({
   compareBase,
   file,
   filtered,
+  agentSession,
   sessions,
   analytics,
   issues,
@@ -1349,6 +1363,7 @@ function RightPanel({
   compareBase: RecordDetail | null;
   file: FileScanResult | null;
   filtered: LogSummary[];
+  agentSession: AgentSessionResult | null;
   sessions: SessionGroup[];
   analytics: AnalyticsSummary;
   issues: IssueRecord[];
@@ -1373,6 +1388,12 @@ function RightPanel({
         </button>
         <button className={tab === "trace" ? "active" : ""} onClick={() => setTab("trace")} title="Trace">
           <Network size={14} />
+        </button>
+        <button className={tab === "timeline" ? "active" : ""} onClick={() => setTab("timeline")} title="Agent Timeline">
+          <Terminal size={14} />
+        </button>
+        <button className={tab === "agentFiles" ? "active" : ""} onClick={() => setTab("agentFiles")} title="Agent Files">
+          <FileText size={14} />
         </button>
         <button className={tab === "sessions" ? "active" : ""} onClick={() => setTab("sessions")} title="Sessions">
           <Users size={14} />
@@ -1407,6 +1428,8 @@ function RightPanel({
       </div>
       {tab === "metadata" ? <MetadataView detail={detail} file={file} /> : null}
       {tab === "trace" ? <TraceView file={file} traces={filterOptions.traces} onJump={onJump} onTraceFilter={onTraceFilter} /> : null}
+      {tab === "timeline" ? <AgentTimelineView session={agentSession} onJump={onJump} /> : null}
+      {tab === "agentFiles" ? <AgentFilesView session={agentSession} onJump={onJump} /> : null}
       {tab === "sessions" ? <SessionsView sessions={sessions} onJump={onJump} onTraceFilter={onTraceFilter} /> : null}
       {tab === "analytics" ? <AnalyticsView analytics={analytics} filtered={filtered} /> : null}
       {tab === "issues" ? <IssuesView issues={issues} onJump={onJump} /> : null}
@@ -1542,6 +1565,146 @@ function SessionsView({
       </div>
     </div>
   );
+}
+
+function AgentTimelineView({
+  session,
+  onJump,
+}: {
+  session: AgentSessionResult | null;
+  onJump: (result: SearchResult) => void;
+}) {
+  if (!session) return <div className="empty-state">Open a JSONL file to build an agent timeline.</div>;
+  if (!session.events.length) return <div className="empty-state">No agent events found in this file.</div>;
+  return (
+    <div className="debug-view">
+      <div className="section-head">
+        <h3>Agent Timeline</h3>
+        <span>
+          {session.totalEvents.toLocaleString()} events · {session.sessions.length.toLocaleString()} sessions
+        </span>
+      </div>
+      <div className="agent-timeline">
+        {session.events.slice(0, 1000).map((event) => (
+          <button
+            key={`${event.lineNumber}-${event.byteOffset}-${event.id}`}
+            className={`agent-event-card ${event.eventType}`}
+            onClick={() =>
+              onJump({
+                lineNumber: event.lineNumber,
+                byteOffset: event.byteOffset,
+                context: event.preview ?? event.eventType,
+              })
+            }
+          >
+            <div className="agent-event-top">
+              <span className="event-type">{agentEventLabel(event)}</span>
+              <span>Line {event.lineNumber}</span>
+            </div>
+            <strong>{event.preview || event.command || event.toolName || event.id}</strong>
+            <div className="agent-event-meta">
+              {event.provider ? <span>{event.provider}</span> : null}
+              {event.role ? <span>{event.role}</span> : null}
+              {event.sessionId ? <span>{event.sessionId}</span> : null}
+              {event.durationMs ? <span>{formatLatency(event.durationMs)}</span> : null}
+            </div>
+            {event.command ? <code className="agent-command">{event.command}</code> : null}
+            {event.filePaths.length ? (
+              <div className="agent-file-tags">
+                {event.filePaths.slice(0, 4).map((path) => (
+                  <span key={path}>{path}</span>
+                ))}
+              </div>
+            ) : null}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AgentFilesView({
+  session,
+  onJump,
+}: {
+  session: AgentSessionResult | null;
+  onJump: (result: SearchResult) => void;
+}) {
+  if (!session) return <div className="empty-state">Open a JSONL file to inspect agent file activity.</div>;
+  const files = buildAgentFileActivity(session.events);
+  if (!files.length) return <div className="empty-state">No file paths were detected in agent events.</div>;
+  return (
+    <div className="debug-view">
+      <div className="section-head">
+        <h3>Agent Files</h3>
+        <span>{files.length.toLocaleString()} files</span>
+      </div>
+      <div className="agent-files-list">
+        {files.slice(0, 300).map((file) => (
+          <button
+            key={file.path}
+            className="agent-file-card"
+            onClick={() =>
+              onJump({
+                lineNumber: file.first.lineNumber,
+                byteOffset: file.first.byteOffset,
+                context: file.path,
+              })
+            }
+          >
+            <strong>{file.path}</strong>
+            <div className="agent-event-meta">
+              <span>{file.events.length.toLocaleString()} events</span>
+              <span>first line {file.first.lineNumber}</span>
+              <span>last line {file.last.lineNumber}</span>
+            </div>
+            <div className="agent-file-tags">
+              {file.eventTypes.slice(0, 6).map((type) => (
+                <span key={type}>{type}</span>
+              ))}
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function agentEventLabel(event: AgentEvent) {
+  if (event.eventType === "shell_command") return "Shell";
+  if (event.eventType === "file_edit") return "File";
+  if (event.eventType === "tool_call") return event.toolName || "Tool";
+  if (event.eventType === "tool_result") return "Result";
+  if (event.eventType === "user_message") return "User";
+  if (event.eventType === "assistant_message") return "Assistant";
+  if (event.eventType === "plan_update") return "Plan";
+  if (event.eventType === "reasoning") return "Reasoning";
+  if (event.eventType === "system") return "System";
+  if (event.eventType === "error") return "Error";
+  return "Event";
+}
+
+function buildAgentFileActivity(events: AgentEvent[]) {
+  const map = new Map<string, AgentEvent[]>();
+  for (const event of events) {
+    for (const path of event.filePaths) {
+      const bucket = map.get(path) ?? [];
+      bucket.push(event);
+      map.set(path, bucket);
+    }
+  }
+  return [...map.entries()]
+    .map(([path, fileEvents]) => {
+      const sorted = [...fileEvents].sort((a, b) => a.lineNumber - b.lineNumber);
+      return {
+        path,
+        events: sorted,
+        first: sorted[0],
+        last: sorted[sorted.length - 1],
+        eventTypes: [...new Set(sorted.map((event) => event.eventType))],
+      };
+    })
+    .sort((a, b) => b.events.length - a.events.length || a.path.localeCompare(b.path));
 }
 
 function AnalyticsView({ analytics, filtered }: { analytics: AnalyticsSummary; filtered: LogSummary[] }) {
