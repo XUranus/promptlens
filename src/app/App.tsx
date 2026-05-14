@@ -539,6 +539,7 @@ export function App() {
 
   async function loadFile(path: string, options?: { quiet?: boolean; source?: LogSource }) {
     const source = options?.source ?? "audit";
+    setSelectedAgentEvent(null);
     if (!options?.quiet) setError(null);
     setLoading(true);
     setScanProgress(null);
@@ -698,6 +699,7 @@ export function App() {
 
   function handleTabSwitch(tabId: string) {
     if (tabId === activeTabId) return;
+    setSelectedAgentEvent(null);
     setTabSwitching(true);
     setTimeout(() => {
       setActiveTabId(tabId);
@@ -939,6 +941,7 @@ export function App() {
             file={file}
             filtered={filtered}
             selected={selected}
+            selectedAgentEvent={selectedAgentEvent}
             newLineNumbers={newLineNumbers}
             agentSession={agentSession}
             sessions={sessions}
@@ -976,6 +979,7 @@ export function App() {
             detail={detail}
             compareBase={compareBase}
             file={file}
+            agentEvent={selectedAgentEvent}
             onClearCompare={() => updateActiveTab({ compareBase: null })}
           />
         </aside>
@@ -1320,13 +1324,36 @@ function DetailView({
           ))}
         </div>
       ) : (
-        <div className="empty-state">No normalized messages found. Use the JSON Tree for this record.</div>
+        <RawRecordFallback detail={detail} />
       )}
     </div>
   );
 }
 
+function RawRecordFallback({ detail }: { detail: RecordDetail }) {
+  const request = detail.normalized?.request?.raw ?? detail.normalized?.request?.messages ?? rawValueByKeys(detail.raw, ["request", "input", "prompt", "messages"]);
+  const response =
+    detail.normalized?.response?.raw ?? detail.normalized?.response?.messages ?? detail.normalized?.response?.text ?? rawValueByKeys(detail.raw, ["response", "output", "completion", "result"]);
+  return (
+    <div className="raw-fallback">
+      <section className="agent-detail-section">
+        <h2>Raw Request</h2>
+        <JsonCode value={request ?? "No request payload found."} />
+      </section>
+      <section className="agent-detail-section">
+        <h2>Raw Response</h2>
+        <JsonCode value={response ?? "No response payload found."} />
+      </section>
+    </div>
+  );
+}
+
 function AgentEventDetailView({ event, detail }: { event: AgentEvent; detail: RecordDetail }) {
+  const output = rawTextByKeys(event.raw, ["output", "stdout", "stderr", "result"]);
+  const reasoning = event.eventType === "reasoning" ? event.text || rawTextByKeys(event.raw, ["summary", "reasoning", "content", "text"]) : null;
+  const toolInput = rawValueByKeys(event.raw, ["input", "arguments", "args", "parameters"]);
+  const toolResult = rawValueByKeys(event.raw, ["result", "output", "content", "stdout", "stderr"]);
+  const statusText = rawTextByKeys(event.raw, ["error", "message", "stderr"]);
   return (
     <div className="detail-view">
       <div className="detail-title">
@@ -1339,22 +1366,46 @@ function AgentEventDetailView({ event, detail }: { event: AgentEvent; detail: Re
         <span className={`pill ${event.status === "error" ? "error" : "success"}`}>{event.eventType}</span>
       </div>
 
-      {event.command ? (
-        <section className="agent-detail-section">
-          <h2>Command</h2>
-          <pre className="agent-command full">{event.command}</pre>
+      <AgentEventSummary event={event} detail={detail} />
+
+      {reasoning ? (
+        <section className="agent-detail-section reasoning-section">
+          <h2>Reasoning</h2>
+          <pre className="plain-text-block">{reasoning}</pre>
         </section>
       ) : null}
 
-      {event.text ? (
+      {event.command ? (
+        <section className="agent-detail-section command-section">
+          <h2>Command</h2>
+          <pre className="agent-command full">{event.command}</pre>
+          {output ? <AgentOutputBlock title="Output" text={output} /> : null}
+        </section>
+      ) : null}
+
+      {event.text && !reasoning ? (
         <section className="agent-detail-section">
           <h2>Text</h2>
           <pre className="plain-text-block">{event.text}</pre>
         </section>
       ) : null}
 
-      {event.filePaths.length ? (
+      {event.eventType === "tool_call" ? (
         <section className="agent-detail-section">
+          <h2>{event.toolName ? `Tool Call · ${event.toolName}` : "Tool Call"}</h2>
+          {toolInput === null ? <pre className="plain-text-block">{event.preview || "No tool arguments found."}</pre> : <JsonCode value={toolInput} />}
+        </section>
+      ) : null}
+
+      {event.eventType === "tool_result" ? (
+        <section className="agent-detail-section">
+          <h2>{event.toolName ? `Tool Result · ${event.toolName}` : "Tool Result"}</h2>
+          {typeof toolResult === "string" ? <pre className="plain-text-block">{toolResult}</pre> : <JsonCode value={toolResult ?? event.raw} />}
+        </section>
+      ) : null}
+
+      {event.filePaths.length ? (
+        <section className="agent-detail-section file-section">
           <h2>Files</h2>
           <div className="agent-file-tags">
             {event.filePaths.map((path) => (
@@ -1364,17 +1415,17 @@ function AgentEventDetailView({ event, detail }: { event: AgentEvent; detail: Re
         </section>
       ) : null}
 
-      {event.eventType === "patch" ? (
+      {["patch", "file_edit", "file_write", "file_read"].includes(event.eventType) ? (
         <section className="agent-detail-section">
-          <h2>Patch</h2>
-          <PatchPreview raw={event.raw} />
+          <h2>{agentEventLabel(event)} Preview</h2>
+          <AgentFileEventPreview event={event} />
         </section>
       ) : null}
 
-      {(event.eventType === "tool_result" || event.eventType === "shell_command") && !event.text ? (
-        <section className="agent-detail-section">
-          <h2>Output</h2>
-          <AgentOutputPreview raw={event.raw} />
+      {event.status === "error" ? (
+        <section className="agent-detail-section error-section">
+          <h2>Error</h2>
+          <pre className="plain-text-block">{statusText || event.preview || "No error details found."}</pre>
         </section>
       ) : null}
 
@@ -1386,28 +1437,66 @@ function AgentEventDetailView({ event, detail }: { event: AgentEvent; detail: Re
   );
 }
 
-function PatchPreview({ raw }: { raw: unknown }) {
-  const text = rawTextByKeys(raw, ["patch", "diff", "stdout", "output"]) ?? safeJson(raw);
-  return <pre className="code-block patch-preview">{text}</pre>;
+function AgentEventSummary({ event, detail }: { event: AgentEvent; detail: RecordDetail }) {
+  return (
+    <section className="agent-summary-grid">
+      <KeyValue label="Provider" value={event.provider || detail.summary.provider || "-"} />
+      <KeyValue label="Role" value={event.role || "-"} />
+      <KeyValue label="Status" value={event.status || detail.summary.status || "-"} />
+      <KeyValue label="Duration" value={formatLatency(event.durationMs ?? detail.summary.latencyMs)} />
+      <KeyValue label="Turn" value={event.turnId || "-"} />
+      <KeyValue label="Parent" value={event.parentId || "-"} />
+    </section>
+  );
 }
 
-function AgentOutputPreview({ raw }: { raw: unknown }) {
-  const text = rawTextByKeys(raw, ["output", "stdout", "stderr", "result", "content"]) ?? safeJson(raw);
-  return <pre className="plain-text-block">{text}</pre>;
+function AgentOutputBlock({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="agent-output-block">
+      <h3>{title}</h3>
+      <pre className="plain-text-block">{text}</pre>
+    </div>
+  );
 }
 
-function rawTextByKeys(value: unknown, keys: string[]): string | null {
-  if (!value || typeof value !== "object") return null;
+function AgentFileEventPreview({ event }: { event: AgentEvent }) {
+  const patch = rawTextByKeys(event.raw, ["patch", "diff"]);
+  const content = rawTextByKeys(event.raw, ["content", "text", "output", "stdout", "result"]);
+  if (event.eventType === "patch" || patch) return <pre className="code-block patch-preview">{patch ?? content ?? safeJson(event.raw)}</pre>;
+  if (content) return <pre className="plain-text-block">{content}</pre>;
+  return <JsonCode value={event.raw} />;
+}
+
+function rawValueByKeys(value: unknown, keys: string[], depth = 0): unknown | null {
+  if (depth > 8 || value === null || value === undefined) return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = rawValueByKeys(item, keys, depth + 1);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  if (typeof value !== "object") return null;
   const record = value as Record<string, unknown>;
   for (const key of keys) {
     const found = record[key];
-    if (typeof found === "string" && found.trim()) return found;
+    if (found !== undefined && found !== null && !(typeof found === "string" && !found.trim())) return found;
   }
-  const payload = record.payload;
-  if (payload && typeof payload === "object") return rawTextByKeys(payload, keys);
-  const message = record.message;
-  if (message && typeof message === "object") return rawTextByKeys(message, keys);
+  for (const nested of Object.values(record)) {
+    if (nested && (typeof nested === "object" || Array.isArray(nested))) {
+      const found = rawValueByKeys(nested, keys, depth + 1);
+      if (found !== null) return found;
+    }
+  }
   return null;
+}
+
+function rawTextByKeys(value: unknown, keys: string[]): string | null {
+  const found = rawValueByKeys(value, keys);
+  if (typeof found === "string" && found.trim()) return found;
+  if (found === null || found === undefined) return null;
+  if (typeof found === "number" || typeof found === "boolean") return String(found);
+  return safeJson(found);
 }
 
 function MessageCard({
@@ -1504,6 +1593,7 @@ function LeftPanel({
   file,
   filtered,
   selected,
+  selectedAgentEvent,
   newLineNumbers,
   agentSession,
   sessions,
@@ -1531,6 +1621,7 @@ function LeftPanel({
   file: FileScanResult | null;
   filtered: LogSummary[];
   selected: LogSummary | null;
+  selectedAgentEvent: AgentEvent | null;
   newLineNumbers: number[];
   agentSession: AgentSessionResult | null;
   sessions: SessionGroup[];
@@ -1606,12 +1697,18 @@ function LeftPanel({
             <div className="empty-state">Open a JSONL audit log to inspect LLM calls locally.</div>
           )
         ) : null}
-        {tab === "timeline" ? <AgentTimelineView session={orderedEvents} onAgentEventSelect={onAgentEventSelect} /> : null}
-        {tab === "agentFiles" ? <AgentFilesView session={orderedEvents} onAgentEventSelect={onAgentEventSelect} /> : null}
-        {tab === "trace" ? <TraceView file={file} traces={filterOptions.traces} onJump={onJump} onTraceFilter={onTraceFilter} /> : null}
-        {tab === "sessions" ? <SessionsView sessions={orderedSessions} onJump={onJump} onTraceFilter={onTraceFilter} /> : null}
+        {tab === "timeline" ? (
+          <AgentTimelineView session={orderedEvents} selected={selectedAgentEvent} onAgentEventSelect={onAgentEventSelect} />
+        ) : null}
+        {tab === "agentFiles" ? (
+          <AgentFilesView session={orderedEvents} selected={selectedAgentEvent} sortOrder={sortOrder} onAgentEventSelect={onAgentEventSelect} />
+        ) : null}
+        {tab === "trace" ? (
+          <TraceView file={file} traces={filterOptions.traces} selected={selected} sortOrder={sortOrder} onJump={onJump} onTraceFilter={onTraceFilter} />
+        ) : null}
+        {tab === "sessions" ? <SessionsView sessions={orderedSessions} selected={selected} onJump={onJump} onTraceFilter={onTraceFilter} /> : null}
         {tab === "analytics" ? <AnalyticsView analytics={analytics} filtered={records} /> : null}
-        {tab === "issues" ? <IssuesView issues={orderedIssues} onJump={onJump} /> : null}
+        {tab === "issues" ? <IssuesView issues={orderedIssues} selected={selected} onJump={onJump} /> : null}
         {tab === "search" ? (
           <SearchPanel
             term={searchTerm}
@@ -1619,6 +1716,7 @@ function LeftPanel({
             searching={searching}
             results={orderedSearchResults}
             indexed={lastSearchIndexed}
+            selected={selected}
             onSearch={onSearch}
             onJump={onJump}
           />
@@ -1644,6 +1742,7 @@ function RightPanel({
   detail,
   compareBase,
   file,
+  agentEvent,
   onClearCompare,
 }: {
   tab: RightTab;
@@ -1651,6 +1750,7 @@ function RightPanel({
   detail: RecordDetail | null;
   compareBase: RecordDetail | null;
   file: FileScanResult | null;
+  agentEvent: AgentEvent | null;
   onClearCompare: () => void;
 }) {
   return (
@@ -1675,12 +1775,12 @@ function RightPanel({
           <Braces size={14} />
         </button>
       </div>
-      {tab === "metadata" ? <MetadataView detail={detail} file={file} /> : null}
+      {tab === "metadata" ? <MetadataView detail={detail} file={file} agentEvent={agentEvent} /> : null}
       {tab === "diff" ? <DiffView base={compareBase} target={detail} onClear={onClearCompare} /> : null}
-      {tab === "tools" ? <ToolCallsView detail={detail} /> : null}
-      {tab === "error" ? <ErrorView detail={detail} /> : null}
-      {tab === "raw" ? <RawPayloadView detail={detail} /> : null}
-      {tab === "json" ? <JsonTreeView detail={detail} /> : null}
+      {tab === "tools" ? <ToolCallsView detail={detail} agentEvent={agentEvent} /> : null}
+      {tab === "error" ? <ErrorView detail={detail} agentEvent={agentEvent} /> : null}
+      {tab === "raw" ? <RawPayloadView detail={detail} agentEvent={agentEvent} /> : null}
+      {tab === "json" ? <JsonTreeView detail={detail} agentEvent={agentEvent} /> : null}
     </div>
   );
 }
@@ -1688,41 +1788,69 @@ function RightPanel({
 function TraceView({
   file,
   traces,
+  selected,
+  sortOrder,
   onJump,
   onTraceFilter,
 }: {
   file: FileScanResult | null;
   traces: string[];
+  selected: LogSummary | null;
+  sortOrder: SortOrder;
   onJump: (result: SearchResult) => void;
   onTraceFilter: (trace: string) => void;
 }) {
+  const [traceQuery, setTraceQuery] = useState("");
   if (!file) return <div className="empty-state">Open a file to inspect traces.</div>;
-  const grouped = traces.map((trace) => ({
-    trace,
-    records: file.summaries.filter((item) => (item.traceId || item.sessionId) === trace),
-  }));
-  if (!grouped.length) return <div className="empty-state">No stable trace or session identifiers found.</div>;
+  const query = traceQuery.trim().toLowerCase();
+  const allGrouped = traces
+    .map((trace) => ({
+      trace,
+      records: orderSummaries(
+        file.summaries.filter((item) => (item.traceId || item.sessionId) === trace),
+        sortOrder,
+      ),
+    }))
+    .sort((a, b) => {
+      const aRecord = a.records[0];
+      const bRecord = b.records[0];
+      return orderFactor(sortOrder) * ((aRecord?.lineNumber ?? 0) - (bRecord?.lineNumber ?? 0));
+    });
+  const grouped = allGrouped.filter(({ trace, records }) => {
+    if (!query) return true;
+    return [
+      trace,
+      ...records.flatMap((record) => [record.id, record.requestId, record.parentId, record.provider, record.model, record.preview]),
+    ]
+      .filter(Boolean)
+      .join("\n")
+      .toLowerCase()
+      .includes(query);
+  });
+  if (!allGrouped.length) return <div className="empty-state">No stable trace or session identifiers found.</div>;
   return (
     <div className="debug-view">
       <div className="section-head">
         <h3>Trace Chains</h3>
         <span>{grouped.length.toLocaleString()} traces</span>
       </div>
+      <div className="inline-filter-row single">
+        <input value={traceQuery} onChange={(event) => setTraceQuery(event.target.value)} placeholder="Filter traces or records" />
+      </div>
+      {!grouped.length ? <div className="empty-state compact">No traces match the current filter.</div> : null}
       <div className="trace-list">
         {grouped.slice(0, 100).map(({ trace, records }) => (
-          <div key={trace} className="trace-card">
+          <div key={trace} className={`trace-card${records.some((record) => isSameLine(record, selected)) ? " active" : ""}`}>
             <div className="trace-head">
               <strong>{trace}</strong>
               <button onClick={() => onTraceFilter(trace)}>Filter</button>
             </div>
             {records
-              .slice()
-              .sort((a, b) => a.lineNumber - b.lineNumber)
               .slice(0, 30)
               .map((record) => (
                 <button
                   key={`${record.lineNumber}-${record.byteOffset}`}
-                  className="trace-node"
+                  className={`trace-node${isSameLine(record, selected) ? " active" : ""}`}
                   onClick={() => onJump({ lineNumber: record.lineNumber, byteOffset: record.byteOffset, context: record.id })}
                 >
                   <span>Line {record.lineNumber}</span>
@@ -1739,25 +1867,48 @@ function TraceView({
 
 function SessionsView({
   sessions,
+  selected,
   onJump,
   onTraceFilter,
 }: {
   sessions: SessionGroup[];
+  selected: LogSummary | null;
   onJump: (result: SearchResult) => void;
   onTraceFilter: (trace: string) => void;
 }) {
+  const [sessionQuery, setSessionQuery] = useState("");
+  const query = sessionQuery.trim().toLowerCase();
+  const visibleSessions = sessions.filter((session) => {
+    if (!query) return true;
+    return [
+      session.id,
+      session.label,
+      session.provider,
+      session.model,
+      session.traceKey,
+      ...session.records.flatMap((record) => [record.id, record.requestId, record.provider, record.model, record.preview]),
+    ]
+      .filter(Boolean)
+      .join("\n")
+      .toLowerCase()
+      .includes(query);
+  });
   if (!sessions.length) return <div className="empty-state">Open a file to inspect grouped sessions.</div>;
   return (
     <div className="debug-view">
       <div className="section-head">
         <h3>Heuristic Sessions</h3>
-        <span>{sessions.length.toLocaleString()} groups</span>
+        <span>{visibleSessions.length.toLocaleString()} / {sessions.length.toLocaleString()} groups</span>
       </div>
+      <div className="inline-filter-row single">
+        <input value={sessionQuery} onChange={(event) => setSessionQuery(event.target.value)} placeholder="Filter sessions or records" />
+      </div>
+      {!visibleSessions.length ? <div className="empty-state compact">No sessions match the current filter.</div> : null}
       <div className="session-list">
-        {sessions.slice(0, 200).map((session) => (
+        {visibleSessions.slice(0, 200).map((session) => (
           <button
             key={session.id}
-            className="session-card"
+            className={`session-card${session.records.some((record) => isSameLine(record, selected)) ? " active" : ""}`}
             onClick={() => onJump({ lineNumber: session.startLine, byteOffset: session.records[0]?.byteOffset ?? 0, context: session.label })}
           >
             <div className="session-top">
@@ -1791,27 +1942,76 @@ function SessionsView({
 
 function AgentTimelineView({
   session,
+  selected,
   onAgentEventSelect,
 }: {
   session: AgentSessionResult | null;
+  selected: AgentEvent | null;
   onAgentEventSelect: (event: AgentEvent) => void;
 }) {
+  const [eventTypeFilter, setEventTypeFilter] = useState("");
+  const [sessionFilter, setSessionFilter] = useState("");
+  const [eventQuery, setEventQuery] = useState("");
   if (!session) return <div className="empty-state">Open a JSONL file to build an agent timeline.</div>;
   if (!session.events.length) return <div className="empty-state">No agent events found in this file.</div>;
+  const eventTypes = [...new Set(session.events.map((event) => event.eventType))].sort();
+  const sessionIds = [...new Set(session.events.map((event) => event.sessionId).filter(Boolean) as string[])].sort();
+  const query = eventQuery.trim().toLowerCase();
+  const events = session.events.filter((event) => {
+    if (eventTypeFilter && event.eventType !== eventTypeFilter) return false;
+    if (sessionFilter && event.sessionId !== sessionFilter) return false;
+    if (!query) return true;
+    return [
+      event.preview,
+      event.text,
+      event.command,
+      event.toolName,
+      event.provider,
+      event.role,
+      event.sessionId,
+      event.turnId,
+      event.parentId,
+      ...event.filePaths,
+    ]
+      .filter(Boolean)
+      .join("\n")
+      .toLowerCase()
+      .includes(query);
+  });
   return (
     <div className="debug-view">
       <div className="section-head">
         <h3>Agent Timeline</h3>
         <span>
-          {logSourceLabel(session.source)} · {session.totalEvents.toLocaleString()} events ·{" "}
+          {logSourceLabel(session.source)} · {events.length.toLocaleString()} / {session.totalEvents.toLocaleString()} events ·{" "}
           {session.sessions.length.toLocaleString()} sessions
         </span>
       </div>
+      <div className="inline-filter-row">
+        <select value={eventTypeFilter} onChange={(event) => setEventTypeFilter(event.target.value)}>
+          <option value="">All event types</option>
+          {eventTypes.map((eventType) => (
+            <option key={eventType} value={eventType}>
+              {agentEventTypeLabel(eventType)}
+            </option>
+          ))}
+        </select>
+        <select value={sessionFilter} onChange={(event) => setSessionFilter(event.target.value)}>
+          <option value="">All sessions</option>
+          {sessionIds.map((sessionId) => (
+            <option key={sessionId} value={sessionId}>
+              {sessionId}
+            </option>
+          ))}
+        </select>
+        <input value={eventQuery} onChange={(event) => setEventQuery(event.target.value)} placeholder="Filter events" />
+      </div>
+      {!events.length ? <div className="empty-state compact">No events match the current filter.</div> : null}
       <div className="agent-timeline">
-        {session.events.slice(0, 1000).map((event) => (
+        {events.slice(0, 1000).map((event) => (
           <button
             key={`${event.lineNumber}-${event.byteOffset}-${event.id}`}
-            className={`agent-event-card ${event.eventType}`}
+            className={`agent-event-card ${event.eventType}${isSameAgentEvent(event, selected) ? " active" : ""}`}
             onClick={() => onAgentEventSelect(event)}
           >
             <div className="agent-event-top">
@@ -1842,25 +2042,39 @@ function AgentTimelineView({
 
 function AgentFilesView({
   session,
+  selected,
+  sortOrder,
   onAgentEventSelect,
 }: {
   session: AgentSessionResult | null;
+  selected: AgentEvent | null;
+  sortOrder: SortOrder;
   onAgentEventSelect: (event: AgentEvent) => void;
 }) {
+  const [fileQuery, setFileQuery] = useState("");
   if (!session) return <div className="empty-state">Open a JSONL file to inspect agent file activity.</div>;
-  const files = buildAgentFileActivity(session.events);
-  if (!files.length) return <div className="empty-state">No file paths were detected in agent events.</div>;
+  const query = fileQuery.trim().toLowerCase();
+  const allFiles = buildAgentFileActivity(session.events, sortOrder);
+  const files = allFiles.filter((file) => {
+    if (!query) return true;
+    return [file.path, ...file.eventTypes].join("\n").toLowerCase().includes(query);
+  });
+  if (!allFiles.length) return <div className="empty-state">No file paths were detected in agent events.</div>;
   return (
     <div className="debug-view">
       <div className="section-head">
         <h3>Agent Files</h3>
         <span>{files.length.toLocaleString()} files</span>
       </div>
+      <div className="inline-filter-row single">
+        <input value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} placeholder="Filter files or event types" />
+      </div>
+      {!files.length ? <div className="empty-state compact">No files match the current filter.</div> : null}
       <div className="agent-files-list">
         {files.slice(0, 300).map((file) => (
           <button
             key={file.path}
-            className="agent-file-card"
+            className={`agent-file-card${selected?.filePaths.includes(file.path) ? " active" : ""}`}
             onClick={() => onAgentEventSelect(file.first)}
           >
             <strong>{file.path}</strong>
@@ -1882,24 +2096,40 @@ function AgentFilesView({
 }
 
 function agentEventLabel(event: AgentEvent) {
-  if (event.eventType === "shell_command") return "Shell";
-  if (event.eventType === "file_read") return "Read";
-  if (event.eventType === "file_write") return "Write";
-  if (event.eventType === "patch") return "Patch";
-  if (event.eventType === "file_edit") return "File";
-  if (event.eventType === "tool_call") return event.toolName || "Tool";
-  if (event.eventType === "tool_result") return "Result";
-  if (event.eventType === "user_message") return "User";
-  if (event.eventType === "assistant_message") return "Assistant";
-  if (event.eventType === "plan_update") return "Plan";
-  if (event.eventType === "reasoning") return "Reasoning";
-  if (event.eventType === "system") return "System";
-  if (event.eventType === "checkpoint") return "Checkpoint";
-  if (event.eventType === "error") return "Error";
+  return agentEventTypeLabel(event.eventType, event.toolName);
+}
+
+function agentEventTypeLabel(eventType: string, toolName?: string) {
+  if (eventType === "shell_command") return "Shell";
+  if (eventType === "file_read") return "Read";
+  if (eventType === "file_write") return "Write";
+  if (eventType === "patch") return "Patch";
+  if (eventType === "file_edit") return "File";
+  if (eventType === "tool_call") return toolName || "Tool";
+  if (eventType === "tool_result") return "Result";
+  if (eventType === "user_message") return "User";
+  if (eventType === "assistant_message") return "Assistant";
+  if (eventType === "plan_update") return "Plan";
+  if (eventType === "reasoning") return "Reasoning";
+  if (eventType === "system") return "System";
+  if (eventType === "checkpoint") return "Checkpoint";
+  if (eventType === "error") return "Error";
   return "Event";
 }
 
-function buildAgentFileActivity(events: AgentEvent[]) {
+function isSameAgentEvent(a: AgentEvent, b: AgentEvent | null) {
+  return Boolean(b && a.id === b.id && a.lineNumber === b.lineNumber && a.byteOffset === b.byteOffset);
+}
+
+function isSameLine(a: { lineNumber: number; byteOffset?: number }, b: { lineNumber: number; byteOffset?: number } | null) {
+  return Boolean(b && a.lineNumber === b.lineNumber && (a.byteOffset === undefined || b.byteOffset === undefined || a.byteOffset === b.byteOffset));
+}
+
+function isSameResult(result: SearchResult, selected: LogSummary | null) {
+  return Boolean(selected && result.lineNumber === selected.lineNumber && result.byteOffset === selected.byteOffset);
+}
+
+function buildAgentFileActivity(events: AgentEvent[], order: SortOrder) {
   const map = new Map<string, AgentEvent[]>();
   for (const event of events) {
     for (const path of event.filePaths) {
@@ -1919,7 +2149,11 @@ function buildAgentFileActivity(events: AgentEvent[]) {
         eventTypes: [...new Set(sorted.map((event) => event.eventType))],
       };
     })
-    .sort((a, b) => b.events.length - a.events.length || a.path.localeCompare(b.path));
+    .sort((a, b) => {
+      const aLine = order === "asc" ? a.first.lineNumber : a.last.lineNumber;
+      const bLine = order === "asc" ? b.first.lineNumber : b.last.lineNumber;
+      return orderFactor(order) * (aLine - bLine) || b.events.length - a.events.length || a.path.localeCompare(b.path);
+    });
 }
 
 function AnalyticsView({ analytics, filtered }: { analytics: AnalyticsSummary; filtered: LogSummary[] }) {
@@ -1964,7 +2198,15 @@ function RankList({ rows }: { rows: Array<{ name: string; count: number }> }) {
   );
 }
 
-function IssuesView({ issues, onJump }: { issues: IssueRecord[]; onJump: (result: SearchResult) => void }) {
+function IssuesView({
+  issues,
+  selected,
+  onJump,
+}: {
+  issues: IssueRecord[];
+  selected: LogSummary | null;
+  onJump: (result: SearchResult) => void;
+}) {
   if (!issues.length) return <div className="empty-state">No obvious issues in the current filter.</div>;
   return (
     <div className="debug-view">
@@ -1976,7 +2218,7 @@ function IssuesView({ issues, onJump }: { issues: IssueRecord[]; onJump: (result
         {issues.slice(0, 300).map((issue) => (
           <button
             key={`${issue.kind}-${issue.summary.lineNumber}`}
-            className={`issue-card ${issue.severity}`}
+            className={`issue-card ${issue.severity}${isSameLine(issue.summary, selected) ? " active" : ""}`}
             onClick={() =>
               onJump({
                 lineNumber: issue.summary.lineNumber,
@@ -2124,7 +2366,30 @@ function SideBySide({ before, after }: { before: string; after: string }) {
   );
 }
 
-function ToolCallsView({ detail }: { detail: RecordDetail | null }) {
+function ToolCallsView({ detail, agentEvent }: { detail: RecordDetail | null; agentEvent: AgentEvent | null }) {
+  if (agentEvent) {
+    const toolContext = {
+      eventType: agentEvent.eventType,
+      toolName: agentEvent.toolName,
+      command: agentEvent.command,
+      filePaths: agentEvent.filePaths,
+      status: agentEvent.status,
+      durationMs: agentEvent.durationMs,
+      output: rawTextByKeys(agentEvent.raw, ["output", "stdout", "stderr", "result", "content"]),
+      raw: agentEvent.raw,
+    };
+    return (
+      <div className="debug-view">
+        <div className="panel-actions">
+          <button onClick={() => copyJson(toolContext)}>
+            <Copy size={14} />
+            Copy event tool context
+          </button>
+        </div>
+        <JsonCode value={toolContext} />
+      </div>
+    );
+  }
   if (!detail) return <div className="empty-state">Tool calls will appear here.</div>;
   const toolCalls = detail.normalized?.response?.toolCalls ?? collectContent(detail.normalized?.request?.messages, "tool_call");
   const toolResults = collectContent(detail.normalized?.response?.messages, "tool_result");
@@ -2144,7 +2409,30 @@ function ToolCallsView({ detail }: { detail: RecordDetail | null }) {
   );
 }
 
-function ErrorView({ detail }: { detail: RecordDetail | null }) {
+function ErrorView({ detail, agentEvent }: { detail: RecordDetail | null; agentEvent: AgentEvent | null }) {
+  if (agentEvent) {
+    const error =
+      agentEvent.eventType === "error" || agentEvent.status === "error"
+        ? {
+            eventType: agentEvent.eventType,
+            status: agentEvent.status,
+            preview: agentEvent.preview,
+            text: agentEvent.text,
+            raw: agentEvent.raw,
+          }
+        : "No error on this agent event.";
+    return (
+      <div className="debug-view">
+        <div className="panel-actions">
+          <button onClick={() => copyJson(error)}>
+            <Copy size={14} />
+            Copy event error
+          </button>
+        </div>
+        <JsonCode value={error} />
+      </div>
+    );
+  }
   if (!detail) return <div className="empty-state">Error details will appear here.</div>;
   const error = detail.normalized?.error ?? detail.summary.parseError;
   return (
@@ -2160,7 +2448,25 @@ function ErrorView({ detail }: { detail: RecordDetail | null }) {
   );
 }
 
-function RawPayloadView({ detail }: { detail: RecordDetail | null }) {
+function RawPayloadView({ detail, agentEvent }: { detail: RecordDetail | null; agentEvent: AgentEvent | null }) {
+  if (agentEvent) {
+    return (
+      <div className="debug-view">
+        <div className="panel-actions wrap">
+          <button onClick={() => copyJson(agentEvent.raw)}>
+            <Copy size={14} />
+            Copy event raw
+          </button>
+          <button onClick={() => copyText(agentEvent.text ?? agentEvent.command ?? agentEvent.preview ?? "")}>
+            <Copy size={14} />
+            Copy event text
+          </button>
+        </div>
+        <h3>Agent Event</h3>
+        <JsonCode value={agentEvent.raw} />
+      </div>
+    );
+  }
   if (!detail) return <div className="empty-state">Raw request and response will appear here.</div>;
   const request = detail.normalized?.request?.raw ?? detail.normalized?.request?.messages ?? detail.raw;
   const response = detail.normalized?.response?.raw ?? detail.normalized?.response?.messages ?? detail.normalized?.response?.text;
@@ -2189,7 +2495,15 @@ function RawPayloadView({ detail }: { detail: RecordDetail | null }) {
   );
 }
 
-function MetadataView({ detail, file }: { detail: RecordDetail | null; file: FileScanResult | null }) {
+function MetadataView({
+  detail,
+  file,
+  agentEvent,
+}: {
+  detail: RecordDetail | null;
+  file: FileScanResult | null;
+  agentEvent: AgentEvent | null;
+}) {
   if (!file) return <div className="empty-state">File metadata will appear here.</div>;
   const summary = detail?.summary;
   const usage = detail?.normalized?.usage;
@@ -2201,6 +2515,22 @@ function MetadataView({ detail, file }: { detail: RecordDetail | null; file: Fil
       <KeyValue label="Total lines" value={file.totalLines.toLocaleString()} />
       <KeyValue label="Valid" value={file.validRecords.toLocaleString()} />
       <KeyValue label="Invalid" value={file.invalidRecords.toLocaleString()} />
+      {agentEvent ? (
+        <>
+          <hr />
+          <KeyValue label="Event type" value={agentEvent.eventType} />
+          <KeyValue label="Event line" value={agentEvent.lineNumber} />
+          <KeyValue label="Provider" value={agentEvent.provider || "-"} />
+          <KeyValue label="Role" value={agentEvent.role || "-"} />
+          <KeyValue label="Session" value={agentEvent.sessionId || "-"} />
+          <KeyValue label="Turn" value={agentEvent.turnId || "-"} />
+          <KeyValue label="Parent" value={agentEvent.parentId || "-"} />
+          <KeyValue label="Tool" value={agentEvent.toolName || "-"} />
+          <KeyValue label="Status" value={agentEvent.status || "-"} />
+          <KeyValue label="Duration" value={formatLatency(agentEvent.durationMs)} />
+          <KeyValue label="Files" value={agentEvent.filePaths.length ? agentEvent.filePaths.join(", ") : "-"} />
+        </>
+      ) : null}
       {summary ? (
         <>
           <hr />
@@ -2235,15 +2565,17 @@ function JsonCode({ value }: { value: unknown }) {
   return <pre className="code-block json-code">{highlightJson(safeJson(value))}</pre>;
 }
 
-function JsonTreeView({ detail }: { detail: RecordDetail | null }) {
+function JsonTreeView({ detail, agentEvent }: { detail: RecordDetail | null; agentEvent: AgentEvent | null }) {
   const [jsonQuery, setJsonQuery] = useState("");
+  const root = agentEvent?.raw ?? detail?.raw ?? detail?.parseError;
+  const copyLabel = agentEvent ? "Copy event" : "Copy record";
   if (!detail) return <div className="empty-state">JSON Tree will appear here.</div>;
   return (
     <div className="json-tree-view">
       <div className="panel-actions">
-        <button onClick={() => copyJson(detail.raw ?? detail.parseError)}>
+        <button onClick={() => copyJson(root)}>
           <Copy size={14} />
-          Copy record
+          {copyLabel}
         </button>
       </div>
       <input
@@ -2252,7 +2584,7 @@ function JsonTreeView({ detail }: { detail: RecordDetail | null }) {
         onChange={(event) => setJsonQuery(event.target.value)}
         placeholder="Filter JSON key/value"
       />
-      <JsonNode name="root" value={detail.raw ?? detail.parseError} path="$" query={jsonQuery.trim().toLowerCase()} />
+      <JsonNode name="root" value={root} path="$" query={jsonQuery.trim().toLowerCase()} />
     </div>
   );
 }
@@ -2418,6 +2750,7 @@ function SearchPanel({
   searching,
   results,
   indexed,
+  selected,
   onSearch,
   onJump,
 }: {
@@ -2426,6 +2759,7 @@ function SearchPanel({
   searching: boolean;
   results: SearchResult[];
   indexed: boolean | null;
+  selected: LogSummary | null;
   onSearch: () => void;
   onJump: (result: SearchResult) => void;
 }) {
@@ -2449,7 +2783,11 @@ function SearchPanel({
       </div>
       <div className="search-results">
         {results.map((result) => (
-          <button key={`${result.lineNumber}-${result.byteOffset}`} onClick={() => onJump(result)}>
+          <button
+            key={`${result.lineNumber}-${result.byteOffset}`}
+            className={isSameResult(result, selected) ? "active" : ""}
+            onClick={() => onJump(result)}
+          >
             <strong>Line {result.lineNumber}</strong>
             <span>{result.context}</span>
           </button>
