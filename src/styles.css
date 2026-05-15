@@ -362,6 +362,11 @@ select {
   width: 320px;
 }
 
+.export-menu {
+  left: 198px;
+  width: 300px;
+}
+
 .menu-section {
   display: grid;
   gap: 4px;
@@ -1289,13 +1294,8 @@ body.resizing * {
 }
 
 .message-content {
-  max-height: 360px;
-  overflow: hidden;
   padding: 14px;
-}
-
-.message-content.expanded {
-  max-height: none;
+  overflow: visible;
 }
 
 .message-actions {
@@ -1591,6 +1591,7 @@ body.resizing * {
 
 .session-list,
 .agent-timeline,
+.subagent-list,
 .agent-files-list,
 .issue-list,
 .rank-list,
@@ -1603,6 +1604,7 @@ body.resizing * {
 
 .session-card,
 .agent-event-card,
+.subagent-card,
 .agent-file-card,
 .issue-card,
 .export-actions button,
@@ -1621,6 +1623,7 @@ body.resizing * {
 
 .session-card:hover,
 .agent-event-card:hover,
+.subagent-card:hover,
 .agent-file-card:hover,
 .issue-card:hover,
 .export-actions button:hover,
@@ -1633,6 +1636,7 @@ body.resizing * {
 
 .session-card.active,
 .agent-event-card.active,
+.subagent-card.active,
 .agent-file-card.active,
 .issue-card.active,
 .trace-card.active,
@@ -1738,13 +1742,15 @@ body.resizing * {
    ============================================================ */
 
 .agent-event-card,
+.subagent-card,
 .agent-file-card {
   display: flex;
   flex-direction: column;
   gap: 7px;
 }
 
-.agent-event-card {
+.agent-event-card,
+.subagent-card {
   border-left-width: 3px;
 }
 
@@ -1774,7 +1780,20 @@ body.resizing * {
   border-left-color: var(--danger);
 }
 
+.subagent-card.completed {
+  border-left-color: var(--success);
+}
+
+.subagent-card.running {
+  border-left-color: var(--warning);
+}
+
+.subagent-card.error {
+  border-left-color: var(--danger);
+}
+
 .agent-event-top,
+.subagent-card-top,
 .agent-event-meta,
 .agent-file-tags {
   display: flex;
@@ -1783,18 +1802,47 @@ body.resizing * {
   flex-wrap: wrap;
 }
 
-.agent-event-top {
+.agent-event-top,
+.subagent-card-top {
   justify-content: space-between;
   color: var(--text-tertiary);
   font-size: 11px;
 }
 
 .agent-event-card strong,
+.subagent-card strong,
 .agent-file-card strong {
   color: var(--text-primary);
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.subagent-card p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.subagent-result-link {
+  align-self: flex-start;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 7px;
+  padding: 3px 8px;
+  color: var(--text-secondary);
+  background: var(--glass-bg-hover);
+  font-size: 11px;
+}
+
+.subagent-result-link:hover {
+  color: var(--text-primary);
+  border-color: var(--glass-border-accent);
 }
 
 .event-type,
@@ -2084,7 +2132,8 @@ body.resizing * {
    Metadata Key-Value
    ============================================================ */
 
-.metadata-view hr {
+.metadata-view hr,
+.metadata-content hr {
   margin: 12px 0;
   border: 0;
   border-top: 1px solid var(--glass-border);

@@ -6,6 +6,7 @@ import {
   AlertCircle,
   AlertTriangle,
   BarChart3,
+  Bot,
   Braces,
   ChevronDown,
   ChevronRight,
@@ -68,18 +69,18 @@ import type {
 type Filter = "all" | "error" | "success" | "image" | "tool";
 type SortKey = "time" | "latency" | "tokens" | "model" | "status";
 type SortOrder = "desc" | "asc";
+type MessageViewMode = "preview" | "text" | "json";
 type LeftTab =
   | "records"
   | "timeline"
+  | "subagents"
   | "agentFiles"
   | "trace"
   | "sessions"
   | "analytics"
   | "issues"
-  | "search"
-  | "export";
+  | "search";
 type RightTab =
-  | "metadata"
   | "diff"
   | "tools"
   | "error"
@@ -124,9 +125,20 @@ type IssueRecord = {
   severity: "high" | "medium" | "low";
 };
 
+type SubagentTask = {
+  id: string;
+  type: string;
+  description: string;
+  prompt?: string;
+  call: AgentEvent;
+  result?: AgentEvent;
+  status: "running" | "completed" | "error";
+};
+
 const THEME_KEY = "promptlens.theme";
 const WORKSPACE_KEY = "promptlens.workspace";
 const SETTINGS_KEY = "promptlens.settings";
+const MESSAGE_VIEW_MODE_KEY = "promptlens.messageViewMode";
 
 const LOG_SOURCE_OPTIONS: Array<{ value: LogSource; label: string }> = [
   { value: "audit", label: "Audit Log" },
@@ -188,12 +200,13 @@ export function App() {
   const [tokensMin, setTokensMin] = useState("");
   const [leftTab, setLeftTab] = useState<LeftTab>("records");
   const [leftSortOrder, setLeftSortOrder] = useState<SortOrder>("desc");
-  const [rightTab, setRightTab] = useState<RightTab>("metadata");
+  const [rightTab, setRightTab] = useState<RightTab>("tools");
   const [selectedAgentEvent, setSelectedAgentEvent] = useState<AgentEvent | null>(null);
   const [recentFiles, setRecentFiles] = useState<string[]>(() => loadRecentFiles());
   const [restoredWorkspace, setRestoredWorkspace] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => loadTheme());
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
+  const [messageViewMode, setMessageViewMode] = useState<MessageViewMode>(() => loadMessageViewMode());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [openSource, setOpenSource] = useState<LogSource>("audit");
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
@@ -308,6 +321,10 @@ export function App() {
   useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
+
+  useEffect(() => {
+    localStorage.setItem(MESSAGE_VIEW_MODE_KEY, messageViewMode);
+  }, [messageViewMode]);
 
   // Overlay: show spinner while loading, fade out 500ms after load completes
   useEffect(() => {
@@ -790,6 +807,10 @@ export function App() {
         loading={loading}
         fileLoaded={Boolean(file)}
         cacheTitle={cacheInfo?.path || "Clear cache"}
+        file={file}
+        filtered={filtered}
+        analytics={analytics}
+        issues={issues}
         onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
         onToggleSettings={() => setSettingsOpen((open) => !open)}
         onChangeSettings={setSettings}
@@ -797,6 +818,8 @@ export function App() {
         onOpenRecent={(path) => void loadFile(path, { source: openSource })}
         onRescan={() => void handleRescan()}
         onClearCache={() => void handleClearCache()}
+        onExport={handleExport}
+        onRawExport={handleRawExport}
       />
       <header className="toolbar">
         <div className="search-box">
@@ -914,21 +937,27 @@ export function App() {
             searchResults={searchResults}
             lastSearchIndexed={lastSearchIndexed}
             analytics={analytics}
+            detail={detail}
             onSearch={handleSearch}
             onSelect={handleSelect}
             onCompare={handleSetCompare}
             onJump={jumpToResult}
             onAgentEventSelect={jumpToAgentEvent}
             onTraceFilter={(trace) => updateActiveTab({ traceFilter: trace, issueOnly: false })}
-            onExport={handleExport}
-            onRawExport={handleRawExport}
           />
         </aside>
 
         <div className="resize-handle" id="resize-handle-left" />
 
         <section className="conversation-pane">
-          <DetailView detail={detail} selected={selected} agentEvent={selectedAgentEvent} onImagePreview={setImagePreview} />
+          <DetailView
+            detail={detail}
+            selected={selected}
+            agentEvent={selectedAgentEvent}
+            messageViewMode={messageViewMode}
+            onMessageViewModeChange={setMessageViewMode}
+            onImagePreview={setImagePreview}
+          />
         </section>
 
         <div className="resize-handle" id="resize-handle-right" />
@@ -976,6 +1005,10 @@ function TitleBar({
   loading,
   fileLoaded,
   cacheTitle,
+  file,
+  filtered,
+  analytics,
+  issues,
   onToggleTheme,
   onToggleSettings,
   onChangeSettings,
@@ -983,6 +1016,8 @@ function TitleBar({
   onOpenRecent,
   onRescan,
   onClearCache,
+  onExport,
+  onRawExport,
 }: {
   theme: Theme;
   settings: AppSettings;
@@ -992,6 +1027,10 @@ function TitleBar({
   loading: boolean;
   fileLoaded: boolean;
   cacheTitle: string;
+  file: FileScanResult | null;
+  filtered: LogSummary[];
+  analytics: AnalyticsSummary;
+  issues: IssueRecord[];
   onToggleTheme: () => void;
   onToggleSettings: () => void;
   onChangeSettings: (settings: AppSettings) => void;
@@ -999,9 +1038,11 @@ function TitleBar({
   onOpenRecent: (path: string) => void;
   onRescan: () => void;
   onClearCache: () => void;
+  onExport: (kind: "jsonl" | "csv" | "report") => void;
+  onRawExport: (kind: "raw_jsonl" | "normalized_jsonl" | "session_markdown") => void;
 }) {
   const [maximized, setMaximized] = useState(false);
-  const [openMenu, setOpenMenu] = useState<"open" | "settings" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"open" | "export" | "settings" | null>(null);
 
   useEffect(() => {
     appWindow.isMaximized().then(setMaximized);
@@ -1021,14 +1062,14 @@ function TitleBar({
     void appWindow.startDragging();
   }
 
-  function toggleMenu(menu: "open" | "settings") {
+  function toggleMenu(menu: "open" | "export" | "settings") {
     setOpenMenu((current) => {
-      const next: "open" | "settings" | null = current === menu ? null : menu;
+      const next: "open" | "export" | "settings" | null = current === menu ? null : menu;
       if (menu === "settings") {
         const willOpenSettings = next === "settings";
         if (willOpenSettings !== settingsOpen) onToggleSettings();
       }
-      if (menu === "open" && settingsOpen) onToggleSettings();
+      if ((menu === "open" || menu === "export") && settingsOpen) onToggleSettings();
       return next;
     });
   }
@@ -1065,6 +1106,7 @@ function TitleBar({
         </div>
         <div className="app-menu">
           <button className={openMenu === "open" ? "active" : ""} onClick={() => toggleMenu("open")}>Open</button>
+          <button className={openMenu === "export" ? "active" : ""} onClick={() => toggleMenu("export")}>Export</button>
           <button className={openMenu === "settings" ? "active" : ""} onClick={() => toggleMenu("settings")}>Setting</button>
         </div>
       </div>
@@ -1106,6 +1148,22 @@ function TitleBar({
           onClearCache={() => {
             setOpenMenu(null);
             onClearCache();
+          }}
+        />
+      ) : null}
+      {openMenu === "export" ? (
+        <ExportMenu
+          file={file}
+          filtered={filtered}
+          analytics={analytics}
+          issues={issues}
+          onExport={(kind) => {
+            setOpenMenu(null);
+            onExport(kind);
+          }}
+          onRawExport={(kind) => {
+            setOpenMenu(null);
+            onRawExport(kind);
           }}
         />
       ) : null}
@@ -1177,6 +1235,59 @@ function openMenuLabel(source: LogSource) {
   if (source === "openclaw") return "OpenClaw Session";
   if (source === "generic_agent") return "Agent JSONL Session";
   return "Audit JSONL Log";
+}
+
+function ExportMenu({
+  file,
+  filtered,
+  analytics,
+  issues,
+  onExport,
+  onRawExport,
+}: {
+  file: FileScanResult | null;
+  filtered: LogSummary[];
+  analytics: AnalyticsSummary;
+  issues: IssueRecord[];
+  onExport: (kind: "jsonl" | "csv" | "report") => void;
+  onRawExport: (kind: "raw_jsonl" | "normalized_jsonl" | "session_markdown") => void;
+}) {
+  return (
+    <div className="menu-popover export-menu" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="menu-section">
+        <span className="menu-caption">
+          {file ? `${filtered.length.toLocaleString()} filtered records · ${issues.length.toLocaleString()} issues` : "Open a file to export"}
+        </span>
+        <button disabled={!file} onClick={() => onExport("jsonl")}>
+          <FileDown size={14} />
+          JSONL summaries
+        </button>
+        <button disabled={!file} onClick={() => onExport("csv")}>
+          <FileDown size={14} />
+          CSV summaries
+        </button>
+        <button disabled={!file} onClick={() => onExport("report")}>
+          <FileDown size={14} />
+          Markdown report
+        </button>
+      </div>
+      <div className="menu-section">
+        <span className="menu-caption">Raw exports · error rate {analytics.errorRate.toFixed(1)}%</span>
+        <button disabled={!file} onClick={() => onRawExport("raw_jsonl")}>
+          <FileDown size={14} />
+          Raw JSONL
+        </button>
+        <button disabled={!file} onClick={() => onRawExport("normalized_jsonl")}>
+          <FileDown size={14} />
+          Normalized JSONL
+        </button>
+        <button disabled={!file} onClick={() => onRawExport("session_markdown")}>
+          <FileDown size={14} />
+          Session Markdown
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function SettingsMenu({
@@ -1396,11 +1507,15 @@ function DetailView({
   detail,
   selected,
   agentEvent,
+  messageViewMode,
+  onMessageViewModeChange,
   onImagePreview,
 }: {
   detail: RecordDetail | null;
   selected: LogSummary | null;
   agentEvent: AgentEvent | null;
+  messageViewMode: MessageViewMode;
+  onMessageViewModeChange: (mode: MessageViewMode) => void;
   onImagePreview: (src: string) => void;
 }) {
   if (!selected) return <div className="empty-state">Select a record to inspect its request and response.</div>;
@@ -1435,10 +1550,22 @@ function DetailView({
       {[...requestMessages, ...responseMessages].length > 0 ? (
         <div className="messages">
           {requestMessages.map((message, index) => (
-            <MessageCard key={`request-${index}`} message={message} onImagePreview={onImagePreview} />
+            <MessageCard
+              key={`request-${index}`}
+              message={message}
+              viewMode={messageViewMode}
+              onViewModeChange={onMessageViewModeChange}
+              onImagePreview={onImagePreview}
+            />
           ))}
           {responseMessages.map((message, index) => (
-            <MessageCard key={`response-${index}`} message={message} onImagePreview={onImagePreview} />
+            <MessageCard
+              key={`response-${index}`}
+              message={message}
+              viewMode={messageViewMode}
+              onViewModeChange={onMessageViewModeChange}
+              onImagePreview={onImagePreview}
+            />
           ))}
         </div>
       ) : (
@@ -1651,14 +1778,16 @@ function rawTextByKeys(value: unknown, keys: string[]): string | null {
 
 function MessageCard({
   message,
+  viewMode,
+  onViewModeChange,
   onImagePreview,
 }: {
   message: NormalizedMessage;
+  viewMode: MessageViewMode;
+  onViewModeChange: (mode: MessageViewMode) => void;
   onImagePreview: (src: string) => void;
 }) {
-  const [viewMode, setViewMode] = useState<"rendered" | "text" | "raw">("rendered");
-  const [expanded, setExpanded] = useState(false);
-  const isRaw = viewMode === "raw";
+  const isJson = viewMode === "json";
 
   return (
     <article className={`message-card role-${message.role}`}>
@@ -1668,20 +1797,19 @@ function MessageCard({
           <button onClick={() => copyJson(message.raw ?? message.content)} title="Copy message">
             <Copy size={14} />
           </button>
-          <button className={viewMode === "rendered" ? "active" : ""} onClick={() => setViewMode("rendered")}>
-            Rendered
+          <button className={viewMode === "preview" ? "active" : ""} onClick={() => onViewModeChange("preview")}>
+            Preview
           </button>
-          <button className={viewMode === "text" ? "active" : ""} onClick={() => setViewMode("text")}>
+          <button className={viewMode === "text" ? "active" : ""} onClick={() => onViewModeChange("text")}>
             Text
           </button>
-          <button className={isRaw ? "active" : ""} onClick={() => setViewMode("raw")}>
-            Raw
+          <button className={isJson ? "active" : ""} onClick={() => onViewModeChange("json")}>
+            JSON
           </button>
-          <button onClick={() => setExpanded(!expanded)}>{expanded ? "Collapse" : "Expand"}</button>
         </div>
       </div>
-      <div className={`message-content ${expanded ? "expanded" : ""}`}>
-        {isRaw ? (
+      <div className="message-content">
+        {isJson ? (
           <JsonCode value={message.raw ?? message.content} />
         ) : (
           message.content.map((content, index) => (
@@ -1755,14 +1883,13 @@ function LeftPanel({
   searchResults,
   lastSearchIndexed,
   analytics,
+  detail,
   onSearch,
   onSelect,
   onCompare,
   onJump,
   onAgentEventSelect,
   onTraceFilter,
-  onExport,
-  onRawExport,
 }: {
   tab: LeftTab;
   setTab: (tab: LeftTab) => void;
@@ -1783,14 +1910,13 @@ function LeftPanel({
   searchResults: SearchResult[];
   lastSearchIndexed: boolean | null;
   analytics: AnalyticsSummary;
+  detail: RecordDetail | null;
   onSearch: () => void;
   onSelect: (summary: LogSummary) => void;
   onCompare: (summary: LogSummary) => void;
   onJump: (result: SearchResult) => void;
   onAgentEventSelect: (event: AgentEvent) => void;
   onTraceFilter: (trace: string) => void;
-  onExport: (kind: "jsonl" | "csv" | "report") => void;
-  onRawExport: (kind: "raw_jsonl" | "normalized_jsonl" | "session_markdown") => void;
 }) {
   const records = useMemo(() => orderSummaries(filtered, sortOrder), [filtered, sortOrder]);
   const orderedEvents = useMemo(
@@ -1811,6 +1937,9 @@ function LeftPanel({
         <button className={tab === "timeline" ? "active" : ""} onClick={() => setTab("timeline")} title="Agent Timeline">
           <Terminal size={14} />
         </button>
+        <button className={tab === "subagents" ? "active" : ""} onClick={() => setTab("subagents")} title="Subagents">
+          <Bot size={14} />
+        </button>
         <button className={tab === "agentFiles" ? "active" : ""} onClick={() => setTab("agentFiles")} title="Agent Files">
           <FileText size={14} />
         </button>
@@ -1828,9 +1957,6 @@ function LeftPanel({
         </button>
         <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")} title="Search">
           <Search size={14} />
-        </button>
-        <button className={tab === "export" ? "active" : ""} onClick={() => setTab("export")} title="Export">
-          <FileDown size={14} />
         </button>
       </div>
       <div className="left-controls">
@@ -1850,6 +1976,9 @@ function LeftPanel({
         {tab === "timeline" ? (
           <AgentTimelineView session={orderedEvents} selected={selectedAgentEvent} onAgentEventSelect={onAgentEventSelect} />
         ) : null}
+        {tab === "subagents" ? (
+          <SubagentsView session={orderedEvents} selected={selectedAgentEvent} onAgentEventSelect={onAgentEventSelect} />
+        ) : null}
         {tab === "agentFiles" ? (
           <AgentFilesView session={orderedEvents} selected={selectedAgentEvent} sortOrder={sortOrder} onAgentEventSelect={onAgentEventSelect} />
         ) : null}
@@ -1857,7 +1986,9 @@ function LeftPanel({
           <TraceView file={file} traces={filterOptions.traces} selected={selected} sortOrder={sortOrder} onJump={onJump} onTraceFilter={onTraceFilter} />
         ) : null}
         {tab === "sessions" ? <SessionsView sessions={orderedSessions} selected={selected} onJump={onJump} onTraceFilter={onTraceFilter} /> : null}
-        {tab === "analytics" ? <AnalyticsView analytics={analytics} filtered={records} /> : null}
+        {tab === "analytics" ? (
+          <AnalyticsView analytics={analytics} filtered={records} file={file} detail={detail} agentEvent={selectedAgentEvent} />
+        ) : null}
         {tab === "issues" ? <IssuesView issues={orderedIssues} selected={selected} onJump={onJump} /> : null}
         {tab === "search" ? (
           <SearchPanel
@@ -1869,16 +2000,6 @@ function LeftPanel({
             selected={selected}
             onSearch={onSearch}
             onJump={onJump}
-          />
-        ) : null}
-        {tab === "export" ? (
-          <ExportView
-            file={file}
-            filtered={records}
-            analytics={analytics}
-            issues={orderedIssues}
-            onExport={onExport}
-            onRawExport={onRawExport}
           />
         ) : null}
       </div>
@@ -1906,9 +2027,6 @@ function RightPanel({
   return (
     <div className="right-panel">
       <div className="tabs">
-        <button className={tab === "metadata" ? "active" : ""} onClick={() => setTab("metadata")} title="Metadata">
-          <FileText size={14} />
-        </button>
         <button className={tab === "diff" ? "active" : ""} onClick={() => setTab("diff")} title="Diff">
           <GitCompare size={14} />
         </button>
@@ -1925,7 +2043,6 @@ function RightPanel({
           <Braces size={14} />
         </button>
       </div>
-      {tab === "metadata" ? <MetadataView detail={detail} file={file} agentEvent={agentEvent} /> : null}
       {tab === "diff" ? <DiffView base={compareBase} target={detail} onClear={onClearCompare} /> : null}
       {tab === "tools" ? <ToolCallsView detail={detail} agentEvent={agentEvent} /> : null}
       {tab === "error" ? <ErrorView detail={detail} agentEvent={agentEvent} /> : null}
@@ -2121,6 +2238,9 @@ function AgentTimelineView({
       event.sessionId,
       event.turnId,
       event.parentId,
+      event.subagentType,
+      event.subagentDescription,
+      event.subagentPrompt,
       ...event.filePaths,
     ]
       .filter(Boolean)
@@ -2185,6 +2305,88 @@ function AgentTimelineView({
             ) : null}
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function SubagentsView({
+  session,
+  selected,
+  onAgentEventSelect,
+}: {
+  session: AgentSessionResult | null;
+  selected: AgentEvent | null;
+  onAgentEventSelect: (event: AgentEvent) => void;
+}) {
+  const [subagentQuery, setSubagentQuery] = useState("");
+  if (!session) return <div className="empty-state">Open a Claude Code session to inspect subagents.</div>;
+  const allTasks = buildSubagentTasks(session.events);
+  const query = subagentQuery.trim().toLowerCase();
+  const tasks = allTasks.filter((task) => {
+    if (!query) return true;
+    return [
+      task.id,
+      task.type,
+      task.description,
+      task.prompt,
+      task.call.preview,
+      task.result?.preview,
+      task.result?.text,
+      task.status,
+    ]
+      .filter(Boolean)
+      .join("\n")
+      .toLowerCase()
+      .includes(query);
+  });
+  if (!allTasks.length) return <div className="empty-state">No Claude subagent tasks found in this session.</div>;
+  return (
+    <div className="debug-view">
+      <div className="section-head">
+        <h3>Subagents</h3>
+        <span>
+          {tasks.length.toLocaleString()} / {allTasks.length.toLocaleString()} tasks
+        </span>
+      </div>
+      <div className="inline-filter-row single">
+        <input value={subagentQuery} onChange={(event) => setSubagentQuery(event.target.value)} placeholder="Filter subagents" />
+      </div>
+      {!tasks.length ? <div className="empty-state compact">No subagents match the current filter.</div> : null}
+      <div className="subagent-list">
+        {tasks.slice(0, 300).map((task) => {
+          const active = isSameAgentEvent(task.call, selected) || (task.result ? isSameAgentEvent(task.result, selected) : false);
+          return (
+            <button
+              key={task.id}
+              className={`subagent-card ${task.status}${active ? " active" : ""}`}
+              onClick={() => onAgentEventSelect(task.call)}
+            >
+              <div className="subagent-card-top">
+                <span className="event-type">{task.type}</span>
+                <span>{task.status}</span>
+              </div>
+              <strong>{task.description}</strong>
+              {task.prompt ? <p>{task.prompt}</p> : null}
+              <div className="agent-event-meta">
+                <span>start line {task.call.lineNumber}</span>
+                {task.result ? <span>result line {task.result.lineNumber}</span> : null}
+                {task.call.toolUseId ? <span>{task.call.toolUseId}</span> : null}
+              </div>
+              {task.result ? (
+                <span
+                  className="subagent-result-link"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onAgentEventSelect(task.result!);
+                  }}
+                >
+                  Open result
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -2281,6 +2483,36 @@ function isSameResult(result: SearchResult, selected: LogSummary | null) {
   return Boolean(selected && result.lineNumber === selected.lineNumber && result.byteOffset === selected.byteOffset);
 }
 
+function buildSubagentTasks(events: AgentEvent[]) {
+  const resultsByToolUseId = new Map<string, AgentEvent>();
+  const unmatchedResults: AgentEvent[] = [];
+  for (const event of events) {
+    if (event.eventType !== "subagent_result") continue;
+    if (event.toolUseId) {
+      resultsByToolUseId.set(event.toolUseId, event);
+    } else {
+      unmatchedResults.push(event);
+    }
+  }
+  return events
+    .filter((event) => event.eventType === "subagent_call")
+    .map((call): SubagentTask => {
+      const result =
+        (call.toolUseId ? resultsByToolUseId.get(call.toolUseId) : undefined) ??
+        unmatchedResults.find((event) => event.lineNumber > call.lineNumber && event.subagentDescription === call.subagentDescription);
+      const status = result?.status === "error" ? "error" : result ? "completed" : "running";
+      return {
+        id: call.toolUseId || call.id,
+        type: call.subagentType || "subagent",
+        description: call.subagentDescription || call.preview || call.text || "Subagent task",
+        prompt: call.subagentPrompt,
+        call,
+        result,
+        status,
+      };
+    });
+}
+
 function buildAgentFileActivity(events: AgentEvent[], order: SortOrder) {
   const map = new Map<string, AgentEvent[]>();
   for (const event of events) {
@@ -2308,12 +2540,24 @@ function buildAgentFileActivity(events: AgentEvent[], order: SortOrder) {
     });
 }
 
-function AnalyticsView({ analytics, filtered }: { analytics: AnalyticsSummary; filtered: LogSummary[] }) {
-  if (!filtered.length) return <div className="empty-state">No records match the current filters.</div>;
+function AnalyticsView({
+  analytics,
+  filtered,
+  file,
+  detail,
+  agentEvent,
+}: {
+  analytics: AnalyticsSummary;
+  filtered: LogSummary[];
+  file: FileScanResult | null;
+  detail: RecordDetail | null;
+  agentEvent: AgentEvent | null;
+}) {
+  if (!file) return <div className="empty-state">Open a file to inspect analytics and metadata.</div>;
   return (
     <div className="debug-view">
       <div className="metric-grid">
-        <MetricTile label="Records" value={analytics.total.toLocaleString()} />
+        <MetricTile label="Records" value={filtered.length.toLocaleString()} />
         <MetricTile label="Errors" value={`${analytics.errors.toLocaleString()} (${analytics.errorRate.toFixed(1)}%)`} />
         <MetricTile label="P95 Latency" value={analytics.p95Latency === null ? "-" : formatLatency(analytics.p95Latency)} />
         <MetricTile label="P99 Latency" value={analytics.p99Latency === null ? "-" : formatLatency(analytics.p99Latency)} />
@@ -2324,6 +2568,8 @@ function AnalyticsView({ analytics, filtered }: { analytics: AnalyticsSummary; f
       <RankList rows={analytics.topModels} />
       <h3>Providers</h3>
       <RankList rows={analytics.topProviders} />
+      <h3>Metadata</h3>
+      <MetadataContent detail={detail} file={file} agentEvent={agentEvent} />
     </div>
   );
 }
@@ -2386,59 +2632,6 @@ function IssuesView({
             <small>{issue.summary.model || "unknown model"}</small>
           </button>
         ))}
-      </div>
-    </div>
-  );
-}
-
-function ExportView({
-  file,
-  filtered,
-  analytics,
-  issues,
-  onExport,
-  onRawExport,
-}: {
-  file: FileScanResult | null;
-  filtered: LogSummary[];
-  analytics: AnalyticsSummary;
-  issues: IssueRecord[];
-  onExport: (kind: "jsonl" | "csv" | "report") => void;
-  onRawExport: (kind: "raw_jsonl" | "normalized_jsonl" | "session_markdown") => void;
-}) {
-  if (!file) return <div className="empty-state">Open a file to export records and reports.</div>;
-  return (
-    <div className="debug-view">
-      <div className="export-summary">
-        <MetricTile label="Filtered Records" value={filtered.length.toLocaleString()} />
-        <MetricTile label="Detected Issues" value={issues.length.toLocaleString()} />
-        <MetricTile label="Error Rate" value={`${analytics.errorRate.toFixed(1)}%`} />
-      </div>
-      <div className="export-actions">
-        <button onClick={() => onExport("jsonl")}>
-          <FileDown size={15} />
-          Export JSONL summaries
-        </button>
-        <button onClick={() => onExport("csv")}>
-          <FileDown size={15} />
-          Export CSV summaries
-        </button>
-        <button onClick={() => onExport("report")}>
-          <FileDown size={15} />
-          Export Markdown report
-        </button>
-        <button onClick={() => onRawExport("raw_jsonl")}>
-          <FileDown size={15} />
-          Export raw JSONL
-        </button>
-        <button onClick={() => onRawExport("normalized_jsonl")}>
-          <FileDown size={15} />
-          Export normalized JSONL
-        </button>
-        <button onClick={() => onRawExport("session_markdown")}>
-          <FileDown size={15} />
-          Export session Markdown
-        </button>
       </div>
     </div>
   );
@@ -2650,20 +2843,19 @@ function RawPayloadView({ detail, agentEvent }: { detail: RecordDetail | null; a
   );
 }
 
-function MetadataView({
+function MetadataContent({
   detail,
   file,
   agentEvent,
 }: {
   detail: RecordDetail | null;
-  file: FileScanResult | null;
+  file: FileScanResult;
   agentEvent: AgentEvent | null;
 }) {
-  if (!file) return <div className="empty-state">File metadata will appear here.</div>;
   const summary = detail?.summary;
   const usage = detail?.normalized?.usage;
   return (
-    <div className="metadata-view">
+    <div className="metadata-content">
       <KeyValue label="File" value={file.fileName} />
       <KeyValue label="Path" value={file.filePath} />
       <KeyValue label="Size" value={formatBytes(file.fileSize)} />
@@ -3212,6 +3404,11 @@ function loadTheme(): Theme {
   return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
 }
 
+function loadMessageViewMode(): MessageViewMode {
+  const mode = localStorage.getItem(MESSAGE_VIEW_MODE_KEY);
+  return mode === "text" || mode === "json" || mode === "preview" ? mode : "preview";
+}
+
 function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
@@ -3265,6 +3462,7 @@ function logSourceLabel(source: LogSource | string) {
 function leftTabLabel(tab: LeftTab) {
   if (tab === "records") return "Records";
   if (tab === "timeline") return "Agent Timeline";
+  if (tab === "subagents") return "Subagents";
   if (tab === "agentFiles") return "Agent Files";
   if (tab === "trace") return "Trace";
   if (tab === "sessions") return "Sessions";
