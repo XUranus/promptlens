@@ -397,6 +397,26 @@ select {
   text-align: left;
 }
 
+.menu-item-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.menu-section kbd {
+  flex: 0 0 auto;
+  border: 1px solid var(--glass-border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: var(--text-tertiary);
+  background: var(--glass-bg-subtle);
+  font-family: var(--code-font-family);
+  font-size: 10px;
+  font-weight: 500;
+}
+
 .menu-section button:hover,
 .settings-menu button:hover {
   border-color: var(--glass-border);
@@ -1533,6 +1553,13 @@ body.resizing * {
   overflow: auto;
 }
 
+.debug-view.virtualized {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .debug-view h3 {
   margin: 14px 0 8px;
   color: var(--text-tertiary);
@@ -1587,6 +1614,26 @@ body.resizing * {
 
 .inline-filter-row input::placeholder {
   color: var(--text-faint);
+}
+
+.virtual-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.virtual-list.agent-timeline,
+.virtual-list.subagent-list,
+.virtual-list.agent-files-list {
+  display: block;
+}
+
+.virtual-row {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  min-height: 0;
+  will-change: transform;
 }
 
 .session-list,

@@ -685,6 +685,8 @@ fn open_cache() -> Result<Connection, String> {
     if version != 0 && version != CACHE_SCHEMA_VERSION {
         conn.execute("DROP TABLE IF EXISTS scan_cache", [])
             .map_err(|err| format!("Failed to reset old cache: {err}"))?;
+        conn.execute("DROP TABLE IF EXISTS agent_session_cache", [])
+            .map_err(|err| format!("Failed to reset old agent session cache: {err}"))?;
         conn.execute("DROP TABLE IF EXISTS search_index", [])
             .map_err(|err| format!("Failed to reset old search index: {err}"))?;
     }
@@ -699,6 +701,19 @@ fn open_cache() -> Result<Connection, String> {
         [],
     )
     .map_err(|err| format!("Failed to initialize cache: {err}"))?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS agent_session_cache (
+            file_path TEXT NOT NULL,
+            source TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            modified TEXT,
+            payload TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (file_path, source)
+        )",
+        [],
+    )
+    .map_err(|err| format!("Failed to initialize agent session cache: {err}"))?;
     conn.execute(
         "CREATE VIRTUAL TABLE IF NOT EXISTS search_index USING fts5(
             file_path UNINDEXED,
@@ -830,6 +845,69 @@ fn write_scan_cache(result: &FileScanResult) -> Result<(), String> {
         ],
     )
     .map_err(|err| format!("Failed to write cache: {err}"))?;
+    Ok(())
+}
+
+fn read_agent_session_cache(
+    file_path: &str,
+    source: LogSource,
+    file_size: u64,
+    modified: Option<&str>,
+) -> Result<Option<AgentSessionResult>, String> {
+    let conn = open_cache()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT payload FROM agent_session_cache
+             WHERE file_path = ?1 AND source = ?2 AND file_size = ?3 AND COALESCE(modified, '') = COALESCE(?4, '')",
+        )
+        .map_err(|err| format!("Failed to read agent session cache: {err}"))?;
+    let mut rows = stmt
+        .query(params![
+            file_path,
+            source.as_str(),
+            file_size as i64,
+            modified
+        ])
+        .map_err(|err| format!("Failed to query agent session cache: {err}"))?;
+    if let Some(row) = rows
+        .next()
+        .map_err(|err| format!("Failed to inspect agent session cache: {err}"))?
+    {
+        let payload: String = row
+            .get(0)
+            .map_err(|err| format!("Failed to load agent session cache: {err}"))?;
+        let result = serde_json::from_str::<AgentSessionResult>(&payload)
+            .map_err(|err| format!("Failed to parse agent session cache: {err}"))?;
+        return Ok(Some(result));
+    }
+    Ok(None)
+}
+
+fn write_agent_session_cache(
+    result: &AgentSessionResult,
+    file_size: u64,
+    modified: Option<&str>,
+) -> Result<(), String> {
+    let conn = open_cache()?;
+    let payload = serde_json::to_string(result)
+        .map_err(|err| format!("Failed to serialize agent session cache: {err}"))?;
+    conn.execute(
+        "INSERT INTO agent_session_cache (file_path, source, file_size, modified, payload, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, strftime('%s','now'))
+         ON CONFLICT(file_path, source) DO UPDATE SET
+            file_size = excluded.file_size,
+            modified = excluded.modified,
+            payload = excluded.payload,
+            updated_at = excluded.updated_at",
+        params![
+            result.file_path,
+            result.source,
+            file_size as i64,
+            modified,
+            payload
+        ],
+    )
+    .map_err(|err| format!("Failed to write agent session cache: {err}"))?;
     Ok(())
 }
 
@@ -989,7 +1067,20 @@ fn read_agent_session(
     log_source: Option<String>,
 ) -> Result<AgentSessionResult, String> {
     let source = LogSource::from_option(log_source);
-    let file = File::open(&file_path).map_err(|err| format!("Failed to open file: {err}"))?;
+    let path = Path::new(&file_path);
+    let metadata = fs::metadata(path).map_err(|err| format!("Failed to read metadata: {err}"))?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs().to_string());
+    if let Ok(Some(cached)) =
+        read_agent_session_cache(&file_path, source, metadata.len(), modified.as_deref())
+    {
+        return Ok(cached);
+    }
+
+    let file = File::open(path).map_err(|err| format!("Failed to open file: {err}"))?;
     let mut reader = BufReader::new(file);
     let mut line = String::new();
     let mut line_number = 0usize;
@@ -1053,13 +1144,15 @@ fn read_agent_session(
     let mut sessions = sessions.into_iter().collect::<Vec<_>>();
     sessions.sort();
 
-    Ok(AgentSessionResult {
+    let result = AgentSessionResult {
         file_path,
         source: source.as_str().to_string(),
         total_events: events.len(),
         sessions,
         events,
-    })
+    };
+    let _ = write_agent_session_cache(&result, metadata.len(), modified.as_deref());
+    Ok(result)
 }
 
 fn search_jsonl_inner(
@@ -2787,6 +2880,45 @@ mod tests {
             .find(|event| event.event_type == "shell_command")
             .expect("shell event");
         assert_eq!(shell.command.as_deref(), Some("npm test"));
+    }
+
+    #[test]
+    fn agent_session_cache_round_trips_by_source() {
+        let _guard = TEST_CACHE_ENV.lock().unwrap();
+        let cache_file = NamedTempFile::new().expect("cache file");
+        std::env::set_var("PROMPTLENS_CACHE_PATH", cache_file.path());
+        let mut file = NamedTempFile::new().expect("temp file");
+        writeln!(
+            file,
+            "{}",
+            json!({"type": "reasoning", "message": "cached reasoning"})
+        )
+        .unwrap();
+        let path = file.path().to_string_lossy().to_string();
+
+        let first = read_agent_session(path.clone(), Some("codex".to_string())).unwrap();
+        let metadata = fs::metadata(&path).unwrap();
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs().to_string());
+        let cached =
+            read_agent_session_cache(&path, LogSource::Codex, metadata.len(), modified.as_deref())
+                .unwrap()
+                .expect("agent session cache");
+
+        assert_eq!(first.total_events, cached.total_events);
+        assert_eq!(cached.events[0].event_type, "reasoning");
+        assert!(read_agent_session_cache(
+            &path,
+            LogSource::ClaudeCode,
+            metadata.len(),
+            modified.as_deref()
+        )
+        .unwrap()
+        .is_none());
+        std::env::remove_var("PROMPTLENS_CACHE_PATH");
     }
 
     #[test]

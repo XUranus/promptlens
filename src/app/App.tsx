@@ -354,6 +354,10 @@ export function App() {
         setLeftTab("search");
         document.getElementById("file-search-input")?.focus();
       }
+      if (mod && event.key.toLowerCase() === "r") {
+        event.preventDefault();
+        void handleRescan();
+      }
       if (mod && event.shiftKey && event.key.toLowerCase() === "c") {
         event.preventDefault();
         void copyJson(detail?.raw);
@@ -1197,18 +1201,20 @@ function OpenMenu({
         {LOG_SOURCE_OPTIONS.map((option) => (
           <button key={option.value} disabled={loading} onClick={() => onOpenSource(option.value)}>
             <FolderOpen size={14} />
-            {openMenuLabel(option.value)}
+            <span className="menu-item-label">{openMenuLabel(option.value)}</span>
+            {option.value === "audit" ? <kbd>Ctrl O</kbd> : null}
           </button>
         ))}
       </div>
       <div className="menu-section">
         <button disabled={!fileLoaded || loading} onClick={onRescan}>
           <RotateCw size={14} />
-          Rescan active file
+          <span className="menu-item-label">Rescan active file</span>
+          <kbd>Ctrl R</kbd>
         </button>
         <button onClick={onClearCache} title={cacheTitle}>
           <Database size={14} />
-          Clear scan cache
+          <span className="menu-item-label">Clear scan cache</span>
         </button>
       </div>
       <div className="menu-section">
@@ -1217,7 +1223,7 @@ function OpenMenu({
           recentFiles.slice(0, 8).map((path) => (
             <button key={path} onClick={() => onOpenRecent(path)} title={path}>
               <FileText size={14} />
-              {basename(path)}
+              <span className="menu-item-label">{basename(path)}</span>
             </button>
           ))
         ) : (
@@ -1260,30 +1266,30 @@ function ExportMenu({
         </span>
         <button disabled={!file} onClick={() => onExport("jsonl")}>
           <FileDown size={14} />
-          JSONL summaries
+          <span className="menu-item-label">JSONL summaries</span>
         </button>
         <button disabled={!file} onClick={() => onExport("csv")}>
           <FileDown size={14} />
-          CSV summaries
+          <span className="menu-item-label">CSV summaries</span>
         </button>
         <button disabled={!file} onClick={() => onExport("report")}>
           <FileDown size={14} />
-          Markdown report
+          <span className="menu-item-label">Markdown report</span>
         </button>
       </div>
       <div className="menu-section">
         <span className="menu-caption">Raw exports · error rate {analytics.errorRate.toFixed(1)}%</span>
         <button disabled={!file} onClick={() => onRawExport("raw_jsonl")}>
           <FileDown size={14} />
-          Raw JSONL
+          <span className="menu-item-label">Raw JSONL</span>
         </button>
         <button disabled={!file} onClick={() => onRawExport("normalized_jsonl")}>
           <FileDown size={14} />
-          Normalized JSONL
+          <span className="menu-item-label">Normalized JSONL</span>
         </button>
         <button disabled={!file} onClick={() => onRawExport("session_markdown")}>
           <FileDown size={14} />
-          Session Markdown
+          <span className="menu-item-label">Session Markdown</span>
         </button>
       </div>
     </div>
@@ -1456,6 +1462,11 @@ function LogList({
     estimateSize: () => 74,
     overscan: 10,
   });
+  useEffect(() => {
+    if (!selected) return;
+    const index = items.findIndex((item) => isSameLine(item, selected));
+    if (index >= 0) rowVirtualizer.scrollToIndex(index, { align: "center" });
+  }, [items, rowVirtualizer, selected]);
 
   return (
     <div ref={parentRef} className="log-list">
@@ -2216,15 +2227,15 @@ function AgentTimelineView({
   selected: AgentEvent | null;
   onAgentEventSelect: (event: AgentEvent) => void;
 }) {
+  const listRef = useRef<HTMLDivElement | null>(null);
   const [eventTypeFilter, setEventTypeFilter] = useState("");
   const [sessionFilter, setSessionFilter] = useState("");
   const [eventQuery, setEventQuery] = useState("");
-  if (!session) return <div className="empty-state">Open a JSONL file to build an agent timeline.</div>;
-  if (!session.events.length) return <div className="empty-state">No agent events found in this file.</div>;
-  const eventTypes = [...new Set(session.events.map((event) => event.eventType))].sort();
-  const sessionIds = [...new Set(session.events.map((event) => event.sessionId).filter(Boolean) as string[])].sort();
+  const sourceEvents = session?.events ?? [];
+  const eventTypes = [...new Set(sourceEvents.map((event) => event.eventType))].sort();
+  const sessionIds = [...new Set(sourceEvents.map((event) => event.sessionId).filter(Boolean) as string[])].sort();
   const query = eventQuery.trim().toLowerCase();
-  const events = session.events.filter((event) => {
+  const events = sourceEvents.filter((event) => {
     if (eventTypeFilter && event.eventType !== eventTypeFilter) return false;
     if (sessionFilter && event.sessionId !== sessionFilter) return false;
     if (!query) return true;
@@ -2248,8 +2259,21 @@ function AgentTimelineView({
       .toLowerCase()
       .includes(query);
   });
+  const rowVirtualizer = useVirtualizer({
+    count: events.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 132,
+    overscan: 8,
+  });
+  useEffect(() => {
+    if (!selected) return;
+    const index = events.findIndex((event) => isSameAgentEvent(event, selected));
+    if (index >= 0) rowVirtualizer.scrollToIndex(index, { align: "center" });
+  }, [events, rowVirtualizer, selected]);
+  if (!session) return <div className="empty-state">Open a JSONL file to build an agent timeline.</div>;
+  if (!sourceEvents.length) return <div className="empty-state">No agent events found in this file.</div>;
   return (
-    <div className="debug-view">
+    <div className="debug-view virtualized">
       <div className="section-head">
         <h3>Agent Timeline</h3>
         <span>
@@ -2277,34 +2301,42 @@ function AgentTimelineView({
         <input value={eventQuery} onChange={(event) => setEventQuery(event.target.value)} placeholder="Filter events" />
       </div>
       {!events.length ? <div className="empty-state compact">No events match the current filter.</div> : null}
-      <div className="agent-timeline">
-        {events.slice(0, 1000).map((event) => (
-          <button
-            key={`${event.lineNumber}-${event.byteOffset}-${event.id}`}
-            className={`agent-event-card ${event.eventType}${isSameAgentEvent(event, selected) ? " active" : ""}`}
-            onClick={() => onAgentEventSelect(event)}
-          >
-            <div className="agent-event-top">
-              <span className="event-type">{agentEventLabel(event)}</span>
-              <span>Line {event.lineNumber}</span>
-            </div>
-            <strong>{event.preview || event.command || event.toolName || event.id}</strong>
-            <div className="agent-event-meta">
-              {event.provider ? <span>{event.provider}</span> : null}
-              {event.role ? <span>{event.role}</span> : null}
-              {event.sessionId ? <span>{event.sessionId}</span> : null}
-              {event.durationMs ? <span>{formatLatency(event.durationMs)}</span> : null}
-            </div>
-            {event.command ? <code className="agent-command">{event.command}</code> : null}
-            {event.filePaths.length ? (
-              <div className="agent-file-tags">
-                {event.filePaths.slice(0, 4).map((path) => (
-                  <span key={path}>{path}</span>
-                ))}
-              </div>
-            ) : null}
-          </button>
-        ))}
+      <div ref={listRef} className="virtual-list agent-timeline">
+        <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative" }}>
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const event = events[virtualRow.index];
+            return (
+              <button
+                key={`${event.lineNumber}-${event.byteOffset}-${event.id}`}
+                ref={rowVirtualizer.measureElement}
+                data-index={virtualRow.index}
+                className={`virtual-row agent-event-card ${event.eventType}${isSameAgentEvent(event, selected) ? " active" : ""}`}
+                onClick={() => onAgentEventSelect(event)}
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                <div className="agent-event-top">
+                  <span className="event-type">{agentEventLabel(event)}</span>
+                  <span>Line {event.lineNumber}</span>
+                </div>
+                <strong>{event.preview || event.command || event.toolName || event.id}</strong>
+                <div className="agent-event-meta">
+                  {event.provider ? <span>{event.provider}</span> : null}
+                  {event.role ? <span>{event.role}</span> : null}
+                  {event.sessionId ? <span>{event.sessionId}</span> : null}
+                  {event.durationMs ? <span>{formatLatency(event.durationMs)}</span> : null}
+                </div>
+                {event.command ? <code className="agent-command">{event.command}</code> : null}
+                {event.filePaths.length ? (
+                  <div className="agent-file-tags">
+                    {event.filePaths.slice(0, 4).map((path) => (
+                      <span key={path}>{path}</span>
+                    ))}
+                  </div>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -2319,9 +2351,9 @@ function SubagentsView({
   selected: AgentEvent | null;
   onAgentEventSelect: (event: AgentEvent) => void;
 }) {
+  const listRef = useRef<HTMLDivElement | null>(null);
   const [subagentQuery, setSubagentQuery] = useState("");
-  if (!session) return <div className="empty-state">Open a Claude Code session to inspect subagents.</div>;
-  const allTasks = buildSubagentTasks(session.events);
+  const allTasks = session ? buildSubagentTasks(session.events) : [];
   const query = subagentQuery.trim().toLowerCase();
   const tasks = allTasks.filter((task) => {
     if (!query) return true;
@@ -2340,9 +2372,21 @@ function SubagentsView({
       .toLowerCase()
       .includes(query);
   });
+  const rowVirtualizer = useVirtualizer({
+    count: tasks.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 146,
+    overscan: 8,
+  });
+  useEffect(() => {
+    if (!selected) return;
+    const index = tasks.findIndex((task) => isSameAgentEvent(task.call, selected) || (task.result ? isSameAgentEvent(task.result, selected) : false));
+    if (index >= 0) rowVirtualizer.scrollToIndex(index, { align: "center" });
+  }, [rowVirtualizer, selected, tasks]);
+  if (!session) return <div className="empty-state">Open a Claude Code session to inspect subagents.</div>;
   if (!allTasks.length) return <div className="empty-state">No Claude subagent tasks found in this session.</div>;
   return (
-    <div className="debug-view">
+    <div className="debug-view virtualized">
       <div className="section-head">
         <h3>Subagents</h3>
         <span>
@@ -2353,40 +2397,46 @@ function SubagentsView({
         <input value={subagentQuery} onChange={(event) => setSubagentQuery(event.target.value)} placeholder="Filter subagents" />
       </div>
       {!tasks.length ? <div className="empty-state compact">No subagents match the current filter.</div> : null}
-      <div className="subagent-list">
-        {tasks.slice(0, 300).map((task) => {
-          const active = isSameAgentEvent(task.call, selected) || (task.result ? isSameAgentEvent(task.result, selected) : false);
-          return (
-            <button
-              key={task.id}
-              className={`subagent-card ${task.status}${active ? " active" : ""}`}
-              onClick={() => onAgentEventSelect(task.call)}
-            >
-              <div className="subagent-card-top">
-                <span className="event-type">{task.type}</span>
-                <span>{task.status}</span>
-              </div>
-              <strong>{task.description}</strong>
-              {task.prompt ? <p>{task.prompt}</p> : null}
-              <div className="agent-event-meta">
-                <span>start line {task.call.lineNumber}</span>
-                {task.result ? <span>result line {task.result.lineNumber}</span> : null}
-                {task.call.toolUseId ? <span>{task.call.toolUseId}</span> : null}
-              </div>
-              {task.result ? (
-                <span
-                  className="subagent-result-link"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onAgentEventSelect(task.result!);
-                  }}
-                >
-                  Open result
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
+      <div ref={listRef} className="virtual-list subagent-list">
+        <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative" }}>
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const task = tasks[virtualRow.index];
+            const active = isSameAgentEvent(task.call, selected) || (task.result ? isSameAgentEvent(task.result, selected) : false);
+            return (
+              <button
+                key={task.id}
+                ref={rowVirtualizer.measureElement}
+                data-index={virtualRow.index}
+                className={`virtual-row subagent-card ${task.status}${active ? " active" : ""}`}
+                onClick={() => onAgentEventSelect(task.call)}
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                <div className="subagent-card-top">
+                  <span className="event-type">{task.type}</span>
+                  <span>{task.status}</span>
+                </div>
+                <strong>{task.description}</strong>
+                {task.prompt ? <p>{task.prompt}</p> : null}
+                <div className="agent-event-meta">
+                  <span>start line {task.call.lineNumber}</span>
+                  {task.result ? <span>result line {task.result.lineNumber}</span> : null}
+                  {task.call.toolUseId ? <span>{task.call.toolUseId}</span> : null}
+                </div>
+                {task.result ? (
+                  <span
+                    className="subagent-result-link"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onAgentEventSelect(task.result!);
+                    }}
+                  >
+                    Open result
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -2403,17 +2453,29 @@ function AgentFilesView({
   sortOrder: SortOrder;
   onAgentEventSelect: (event: AgentEvent) => void;
 }) {
+  const listRef = useRef<HTMLDivElement | null>(null);
   const [fileQuery, setFileQuery] = useState("");
-  if (!session) return <div className="empty-state">Open a JSONL file to inspect agent file activity.</div>;
   const query = fileQuery.trim().toLowerCase();
-  const allFiles = buildAgentFileActivity(session.events, sortOrder);
+  const allFiles = session ? buildAgentFileActivity(session.events, sortOrder) : [];
   const files = allFiles.filter((file) => {
     if (!query) return true;
     return [file.path, ...file.eventTypes].join("\n").toLowerCase().includes(query);
   });
+  const rowVirtualizer = useVirtualizer({
+    count: files.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => 112,
+    overscan: 8,
+  });
+  useEffect(() => {
+    if (!selected?.filePaths.length) return;
+    const index = files.findIndex((file) => selected.filePaths.some((path) => path === file.path));
+    if (index >= 0) rowVirtualizer.scrollToIndex(index, { align: "center" });
+  }, [files, rowVirtualizer, selected]);
+  if (!session) return <div className="empty-state">Open a JSONL file to inspect agent file activity.</div>;
   if (!allFiles.length) return <div className="empty-state">No file paths were detected in agent events.</div>;
   return (
-    <div className="debug-view">
+    <div className="debug-view virtualized">
       <div className="section-head">
         <h3>Agent Files</h3>
         <span>{files.length.toLocaleString()} files</span>
@@ -2422,26 +2484,34 @@ function AgentFilesView({
         <input value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} placeholder="Filter files or event types" />
       </div>
       {!files.length ? <div className="empty-state compact">No files match the current filter.</div> : null}
-      <div className="agent-files-list">
-        {files.slice(0, 300).map((file) => (
-          <button
-            key={file.path}
-            className={`agent-file-card${selected?.filePaths.includes(file.path) ? " active" : ""}`}
-            onClick={() => onAgentEventSelect(file.first)}
-          >
-            <strong>{file.path}</strong>
-            <div className="agent-event-meta">
-              <span>{file.events.length.toLocaleString()} events</span>
-              <span>first line {file.first.lineNumber}</span>
-              <span>last line {file.last.lineNumber}</span>
-            </div>
-            <div className="agent-file-tags">
-              {file.eventTypes.slice(0, 6).map((type) => (
-                <span key={type}>{type}</span>
-              ))}
-            </div>
-          </button>
-        ))}
+      <div ref={listRef} className="virtual-list agent-files-list">
+        <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative" }}>
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const file = files[virtualRow.index];
+            return (
+              <button
+                key={file.path}
+                ref={rowVirtualizer.measureElement}
+                data-index={virtualRow.index}
+                className={`virtual-row agent-file-card${selected?.filePaths.includes(file.path) ? " active" : ""}`}
+                onClick={() => onAgentEventSelect(file.first)}
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                <strong>{file.path}</strong>
+                <div className="agent-event-meta">
+                  <span>{file.events.length.toLocaleString()} events</span>
+                  <span>first line {file.first.lineNumber}</span>
+                  <span>last line {file.last.lineNumber}</span>
+                </div>
+                <div className="agent-file-tags">
+                  {file.eventTypes.slice(0, 6).map((type) => (
+                    <span key={type}>{type}</span>
+                  ))}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
