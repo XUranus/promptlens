@@ -22,7 +22,6 @@ import {
   Moon,
   RotateCw,
   Search,
-  Settings,
   Sun,
   Terminal,
   Users,
@@ -42,6 +41,7 @@ import {
   exportRecords,
   getCacheInfo,
   getFileStatus,
+  listSystemFonts,
   openFileDialog,
   readAgentSession,
   readRecord,
@@ -196,6 +196,7 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [openSource, setOpenSource] = useState<LogSource>("audit");
+  const [systemFonts, setSystemFonts] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
   const [fadeOut, setFadeOut] = useState(false);
@@ -299,6 +300,12 @@ export function App() {
   }, [theme]);
 
   useEffect(() => {
+    listSystemFonts()
+      .then(setSystemFonts)
+      .catch(() => setSystemFonts([]));
+  }, []);
+
+  useEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   }, [settings]);
 
@@ -323,7 +330,7 @@ export function App() {
       const mod = event.metaKey || event.ctrlKey;
       if (mod && event.key.toLowerCase() === "o") {
         event.preventDefault();
-        void handleOpen();
+        void handleOpenSource(openSource);
       }
       if (mod && event.key.toLowerCase() === "f") {
         event.preventDefault();
@@ -558,9 +565,10 @@ export function App() {
     }
   }
 
-  async function handleOpen() {
+  async function handleOpenSource(source: LogSource) {
+    setOpenSource(source);
     const path = await openFileDialog();
-    if (path) await loadFile(path, { source: openSource });
+    if (path) await loadFile(path, { source });
   }
 
   async function handleSelect(summary: LogSummary) {
@@ -777,67 +785,20 @@ export function App() {
         theme={theme}
         settings={settings}
         settingsOpen={settingsOpen}
+        systemFonts={systemFonts}
+        recentFiles={recentFiles}
+        loading={loading}
+        fileLoaded={Boolean(file)}
+        cacheTitle={cacheInfo?.path || "Clear cache"}
         onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
         onToggleSettings={() => setSettingsOpen((open) => !open)}
         onChangeSettings={setSettings}
+        onOpenSource={(source) => void handleOpenSource(source)}
+        onOpenRecent={(path) => void loadFile(path, { source: openSource })}
+        onRescan={() => void handleRescan()}
+        onClearCache={() => void handleClearCache()}
       />
       <header className="toolbar">
-        <div className="brand">
-          <svg width="24" height="24" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
-            <rect width="512" height="512" rx="112" fill="#1a1e2e"/>
-            <circle cx="228" cy="218" r="128" stroke="url(#pl-lens)" strokeWidth="28"/>
-            <circle cx="228" cy="218" r="112" fill="rgba(74,123,247,0.08)"/>
-            <line x1="168" y1="190" x2="288" y2="190" stroke="#6ea8fe" strokeWidth="10" strokeLinecap="round" opacity="0.7"/>
-            <line x1="168" y1="218" x2="260" y2="218" stroke="#6ea8fe" strokeWidth="10" strokeLinecap="round" opacity="0.5"/>
-            <line x1="168" y1="246" x2="240" y2="246" stroke="#6ea8fe" strokeWidth="10" strokeLinecap="round" opacity="0.35"/>
-            <line x1="324" y1="316" x2="408" y2="400" stroke="url(#pl-handle)" strokeWidth="32" strokeLinecap="round"/>
-            <defs>
-              <linearGradient id="pl-lens" x1="140" y1="90" x2="316" y2="346">
-                <stop stopColor="#6ea8fe"/>
-                <stop offset="1" stopColor="#4a7bf7"/>
-              </linearGradient>
-              <linearGradient id="pl-handle" x1="324" y1="316" x2="408" y2="400">
-                <stop stopColor="#8b95a5"/>
-                <stop offset="1" stopColor="#5a6370"/>
-              </linearGradient>
-            </defs>
-          </svg>
-          <span>PromptLens</span>
-        </div>
-        <select
-          className="source-select"
-          value={openSource}
-          onChange={(event) => setOpenSource(event.target.value as LogSource)}
-          title="Choose the JSONL source before opening a file"
-        >
-          {LOG_SOURCE_OPTIONS.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        <button className="button primary" onClick={handleOpen} disabled={loading}>
-          <FolderOpen size={16} />
-          {loading ? "Scanning..." : "Open"}
-        </button>
-        <select
-          className="recent-select"
-          value=""
-          onChange={(event) => event.target.value && void loadFile(event.target.value, { source: openSource })}
-        >
-          <option value="">Recent</option>
-          {recentFiles.map((path) => (
-            <option key={path} value={path}>
-              {basename(path)}
-            </option>
-          ))}
-        </select>
-        <button className="icon-button" onClick={handleRescan} disabled={!file || loading} title="Rescan active file">
-          <RotateCw size={16} />
-        </button>
-        <button className="icon-button" onClick={handleClearCache} title={cacheInfo?.path || "Clear cache"}>
-          <Database size={16} />
-        </button>
         <div className="search-box">
           <Search size={15} />
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter list" />
@@ -1010,18 +971,37 @@ function TitleBar({
   theme,
   settings,
   settingsOpen,
+  systemFonts,
+  recentFiles,
+  loading,
+  fileLoaded,
+  cacheTitle,
   onToggleTheme,
   onToggleSettings,
   onChangeSettings,
+  onOpenSource,
+  onOpenRecent,
+  onRescan,
+  onClearCache,
 }: {
   theme: Theme;
   settings: AppSettings;
   settingsOpen: boolean;
+  systemFonts: string[];
+  recentFiles: string[];
+  loading: boolean;
+  fileLoaded: boolean;
+  cacheTitle: string;
   onToggleTheme: () => void;
   onToggleSettings: () => void;
   onChangeSettings: (settings: AppSettings) => void;
+  onOpenSource: (source: LogSource) => void;
+  onOpenRecent: (path: string) => void;
+  onRescan: () => void;
+  onClearCache: () => void;
 }) {
   const [maximized, setMaximized] = useState(false);
+  const [openMenu, setOpenMenu] = useState<"open" | "settings" | null>(null);
 
   useEffect(() => {
     appWindow.isMaximized().then(setMaximized);
@@ -1031,18 +1011,65 @@ function TitleBar({
     return () => { void unlisten.then((fn) => fn()); };
   }, []);
 
+  useEffect(() => {
+    setOpenMenu(settingsOpen ? "settings" : null);
+  }, [settingsOpen]);
+
   function startDrag(e: React.MouseEvent) {
     if (e.button !== 0) return;
     e.preventDefault();
     void appWindow.startDragging();
   }
 
+  function toggleMenu(menu: "open" | "settings") {
+    setOpenMenu((current) => {
+      const next: "open" | "settings" | null = current === menu ? null : menu;
+      if (menu === "settings") {
+        const willOpenSettings = next === "settings";
+        if (willOpenSettings !== settingsOpen) onToggleSettings();
+      }
+      if (menu === "open" && settingsOpen) onToggleSettings();
+      return next;
+    });
+  }
+
+  function chooseOpenSource(source: LogSource) {
+    setOpenMenu(null);
+    onOpenSource(source);
+  }
+
   return (
     <div className="title-bar" onMouseDown={startDrag} onDoubleClick={() => appWindow.toggleMaximize()}>
+      <div className="app-menu-left" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="brand compact">
+          <svg width="22" height="22" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
+            <rect width="512" height="512" rx="112" fill="#1a1e2e"/>
+            <circle cx="228" cy="218" r="128" stroke="url(#pl-lens-menu)" strokeWidth="28"/>
+            <circle cx="228" cy="218" r="112" fill="rgba(74,123,247,0.08)"/>
+            <line x1="168" y1="190" x2="288" y2="190" stroke="#6ea8fe" strokeWidth="10" strokeLinecap="round" opacity="0.7"/>
+            <line x1="168" y1="218" x2="260" y2="218" stroke="#6ea8fe" strokeWidth="10" strokeLinecap="round" opacity="0.5"/>
+            <line x1="168" y1="246" x2="240" y2="246" stroke="#6ea8fe" strokeWidth="10" strokeLinecap="round" opacity="0.35"/>
+            <line x1="324" y1="316" x2="408" y2="400" stroke="url(#pl-handle-menu)" strokeWidth="32" strokeLinecap="round"/>
+            <defs>
+              <linearGradient id="pl-lens-menu" x1="140" y1="90" x2="316" y2="346">
+                <stop stopColor="#6ea8fe"/>
+                <stop offset="1" stopColor="#4a7bf7"/>
+              </linearGradient>
+              <linearGradient id="pl-handle-menu" x1="324" y1="316" x2="408" y2="400">
+                <stop stopColor="#8b95a5"/>
+                <stop offset="1" stopColor="#5a6370"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          <span>PromptLens</span>
+        </div>
+        <div className="app-menu">
+          <button className={openMenu === "open" ? "active" : ""} onClick={() => toggleMenu("open")}>Open</button>
+          <button className={openMenu === "settings" ? "active" : ""} onClick={() => toggleMenu("settings")}>Setting</button>
+        </div>
+      </div>
+      <div className="title-bar-drag" />
       <div className="traffic-lights" onMouseDown={(e) => e.stopPropagation()}>
-        <button className="tl-close" onClick={() => appWindow.close()} title="Close">
-          <svg width="8" height="8" viewBox="0 0 8 8"><path d="M1 1l6 6M7 1L1 7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
-        </button>
         <button className="tl-minimize" onClick={() => appWindow.minimize()} title="Minimize">
           <svg width="8" height="2" viewBox="0 0 8 2"><path d="M1 1h6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
         </button>
@@ -1053,37 +1080,126 @@ function TitleBar({
             <svg width="8" height="8" viewBox="0 0 8 8"><rect x="1" y="1" width="6" height="6" rx="0.8" stroke="currentColor" strokeWidth="1.2" fill="none"/></svg>
           )}
         </button>
-      </div>
-      <div className="title-bar-drag" />
-      <div className="title-bar-right" onMouseDown={(e) => e.stopPropagation()}>
-        <button className="icon-button tl-theme" onClick={onToggleSettings} title="Settings">
-          <Settings size={13} />
+        <button className="tl-close" onClick={() => appWindow.close()} title="Close">
+          <svg width="8" height="8" viewBox="0 0 8 8"><path d="M1 1l6 6M7 1L1 7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
         </button>
+        <span className="window-divider" />
         <button className="icon-button tl-theme" onClick={onToggleTheme} title="Toggle theme">
           {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
         </button>
       </div>
-      {settingsOpen ? <SettingsMenu settings={settings} onChange={onChangeSettings} /> : null}
+      {openMenu === "open" ? (
+        <OpenMenu
+          loading={loading}
+          fileLoaded={fileLoaded}
+          recentFiles={recentFiles}
+          cacheTitle={cacheTitle}
+          onOpenSource={chooseOpenSource}
+          onOpenRecent={(path) => {
+            setOpenMenu(null);
+            onOpenRecent(path);
+          }}
+          onRescan={() => {
+            setOpenMenu(null);
+            onRescan();
+          }}
+          onClearCache={() => {
+            setOpenMenu(null);
+            onClearCache();
+          }}
+        />
+      ) : null}
+      {openMenu === "settings" ? <SettingsMenu settings={settings} systemFonts={systemFonts} onChange={onChangeSettings} /> : null}
     </div>
   );
 }
 
+function OpenMenu({
+  loading,
+  fileLoaded,
+  recentFiles,
+  cacheTitle,
+  onOpenSource,
+  onOpenRecent,
+  onRescan,
+  onClearCache,
+}: {
+  loading: boolean;
+  fileLoaded: boolean;
+  recentFiles: string[];
+  cacheTitle: string;
+  onOpenSource: (source: LogSource) => void;
+  onOpenRecent: (path: string) => void;
+  onRescan: () => void;
+  onClearCache: () => void;
+}) {
+  return (
+    <div className="menu-popover open-menu" onMouseDown={(event) => event.stopPropagation()}>
+      <div className="menu-section">
+        {LOG_SOURCE_OPTIONS.map((option) => (
+          <button key={option.value} disabled={loading} onClick={() => onOpenSource(option.value)}>
+            <FolderOpen size={14} />
+            {openMenuLabel(option.value)}
+          </button>
+        ))}
+      </div>
+      <div className="menu-section">
+        <button disabled={!fileLoaded || loading} onClick={onRescan}>
+          <RotateCw size={14} />
+          Rescan active file
+        </button>
+        <button onClick={onClearCache} title={cacheTitle}>
+          <Database size={14} />
+          Clear scan cache
+        </button>
+      </div>
+      <div className="menu-section">
+        <span className="menu-caption">Recent</span>
+        {recentFiles.length ? (
+          recentFiles.slice(0, 8).map((path) => (
+            <button key={path} onClick={() => onOpenRecent(path)} title={path}>
+              <FileText size={14} />
+              {basename(path)}
+            </button>
+          ))
+        ) : (
+          <span className="menu-empty">No recent files</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function openMenuLabel(source: LogSource) {
+  if (source === "codex") return "Codex Session";
+  if (source === "claude_code") return "Claude Code Session";
+  if (source === "opencode") return "OpenCode Session";
+  if (source === "openclaw") return "OpenClaw Session";
+  if (source === "generic_agent") return "Agent JSONL Session";
+  return "Audit JSONL Log";
+}
+
 function SettingsMenu({
   settings,
+  systemFonts,
   onChange,
 }: {
   settings: AppSettings;
+  systemFonts: string[];
   onChange: (settings: AppSettings) => void;
 }) {
+  const fonts = systemFonts.length ? systemFonts : ["Inter", "Arial", "Noto Sans", "DejaVu Sans", "JetBrains Mono", "Fira Code", "Consolas"];
   return (
-    <div className="settings-menu" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="menu-popover settings-menu" onMouseDown={(event) => event.stopPropagation()}>
       <label>
         <span>UI font</span>
         <select value={settings.fontFamily} onChange={(event) => onChange({ ...settings, fontFamily: event.target.value })}>
           <option value={DEFAULT_SETTINGS.fontFamily}>System</option>
-          <option value={'"Inter", ui-sans-serif, system-ui, sans-serif'}>Inter</option>
-          <option value={'"SF Pro Text", -apple-system, BlinkMacSystemFont, sans-serif'}>SF Pro</option>
-          <option value={'Arial, Helvetica, sans-serif'}>Arial</option>
+          {fonts.map((font) => (
+            <option key={font} value={`"${font}", ui-sans-serif, system-ui, sans-serif`}>
+              {font}
+            </option>
+          ))}
         </select>
       </label>
       <label>
@@ -1100,9 +1216,11 @@ function SettingsMenu({
         <span>Code font</span>
         <select value={settings.codeFontFamily} onChange={(event) => onChange({ ...settings, codeFontFamily: event.target.value })}>
           <option value={DEFAULT_SETTINGS.codeFontFamily}>System mono</option>
-          <option value={'"JetBrains Mono", ui-monospace, monospace'}>JetBrains Mono</option>
-          <option value={'"Fira Code", ui-monospace, monospace'}>Fira Code</option>
-          <option value={'Menlo, Monaco, Consolas, monospace'}>Menlo</option>
+          {fonts.map((font) => (
+            <option key={font} value={`"${font}", ui-monospace, monospace`}>
+              {font}
+            </option>
+          ))}
         </select>
       </label>
       <button onClick={() => onChange(DEFAULT_SETTINGS)}>Reset fonts</button>
@@ -1383,10 +1501,20 @@ function AgentEventDetailView({ event, detail }: { event: AgentEvent; detail: Re
         </section>
       ) : null}
 
-      {event.text && !reasoning ? (
+      {event.text && !reasoning && !["subagent_call", "subagent_result"].includes(event.eventType) ? (
         <section className="agent-detail-section">
           <h2>Text</h2>
           <pre className="plain-text-block">{event.text}</pre>
+        </section>
+      ) : null}
+
+      {event.eventType === "subagent_call" ? <SubagentCallView event={event} /> : null}
+
+      {event.eventType === "subagent_result" ? (
+        <section className="agent-detail-section subagent-section">
+          <h2>{event.subagentType ? `Subagent Result · ${event.subagentType}` : "Subagent Result"}</h2>
+          {event.subagentDescription ? <p className="agent-detail-note">{event.subagentDescription}</p> : null}
+          {typeof toolResult === "string" ? <pre className="plain-text-block">{toolResult}</pre> : <JsonCode value={toolResult ?? event.raw} />}
         </section>
       ) : null}
 
@@ -1437,6 +1565,26 @@ function AgentEventDetailView({ event, detail }: { event: AgentEvent; detail: Re
   );
 }
 
+function SubagentCallView({ event }: { event: AgentEvent }) {
+  const prompt = event.subagentPrompt ?? rawTextByKeys(event.raw, ["prompt"]);
+  return (
+    <section className="agent-detail-section subagent-section">
+      <h2>{event.subagentType ? `Subagent · ${event.subagentType}` : "Subagent"}</h2>
+      {event.subagentDescription ? (
+        <div className="subagent-description">
+          <strong>{event.subagentDescription}</strong>
+        </div>
+      ) : null}
+      {prompt ? (
+        <div className="agent-output-block">
+          <h3>Prompt</h3>
+          <pre className="plain-text-block">{prompt}</pre>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function AgentEventSummary({ event, detail }: { event: AgentEvent; detail: RecordDetail }) {
   return (
     <section className="agent-summary-grid">
@@ -1446,6 +1594,8 @@ function AgentEventSummary({ event, detail }: { event: AgentEvent; detail: Recor
       <KeyValue label="Duration" value={formatLatency(event.durationMs ?? detail.summary.latencyMs)} />
       <KeyValue label="Turn" value={event.turnId || "-"} />
       <KeyValue label="Parent" value={event.parentId || "-"} />
+      {event.toolUseId ? <KeyValue label="Tool use" value={event.toolUseId} /> : null}
+      {event.subagentType ? <KeyValue label="Subagent" value={event.subagentType} /> : null}
     </section>
   );
 }
@@ -2100,6 +2250,8 @@ function agentEventLabel(event: AgentEvent) {
 }
 
 function agentEventTypeLabel(eventType: string, toolName?: string) {
+  if (eventType === "subagent_call") return "Subagent";
+  if (eventType === "subagent_result") return "Subagent Result";
   if (eventType === "shell_command") return "Shell";
   if (eventType === "file_read") return "Read";
   if (eventType === "file_write") return "Write";
@@ -2371,6 +2523,9 @@ function ToolCallsView({ detail, agentEvent }: { detail: RecordDetail | null; ag
     const toolContext = {
       eventType: agentEvent.eventType,
       toolName: agentEvent.toolName,
+      toolUseId: agentEvent.toolUseId,
+      subagentType: agentEvent.subagentType,
+      subagentDescription: agentEvent.subagentDescription,
       command: agentEvent.command,
       filePaths: agentEvent.filePaths,
       status: agentEvent.status,
@@ -2526,6 +2681,8 @@ function MetadataView({
           <KeyValue label="Turn" value={agentEvent.turnId || "-"} />
           <KeyValue label="Parent" value={agentEvent.parentId || "-"} />
           <KeyValue label="Tool" value={agentEvent.toolName || "-"} />
+          <KeyValue label="Tool use" value={agentEvent.toolUseId || "-"} />
+          <KeyValue label="Subagent" value={agentEvent.subagentType || "-"} />
           <KeyValue label="Status" value={agentEvent.status || "-"} />
           <KeyValue label="Duration" value={formatLatency(agentEvent.durationMs)} />
           <KeyValue label="Files" value={agentEvent.filePaths.length ? agentEvent.filePaths.join(", ") : "-"} />

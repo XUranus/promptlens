@@ -9,11 +9,15 @@ use crate::{
 pub(crate) struct AgentEventAdapterFields {
     pub(crate) role: Option<String>,
     pub(crate) tool_name: Option<String>,
+    pub(crate) tool_use_id: Option<String>,
     pub(crate) command: Option<String>,
     pub(crate) file_paths: Vec<String>,
     pub(crate) text: Option<String>,
     pub(crate) event_type: Option<String>,
     pub(crate) status: Option<String>,
+    pub(crate) subagent_type: Option<String>,
+    pub(crate) subagent_description: Option<String>,
+    pub(crate) subagent_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,11 +193,23 @@ fn adapt_claude_code_event(value: &Value) -> AgentEventAdapterFields {
                     .to_lowercase();
                 if part_type == "tool_use" {
                     fields.tool_name = part.get("name").and_then(Value::as_str).map(str::to_string);
+                    fields.tool_use_id = first_string(part, &["id", "tool_use_id", "toolUseId"]);
                     if let Some(input) = part.get("input") {
                         fields.command = first_string(input, &["command", "cmd"]);
                         fields.file_paths = agent_file_paths(input);
+                        if fields.tool_name.as_deref() == Some("Task") {
+                            fields.subagent_type =
+                                first_string(input, &["subagent_type", "subagentType"]);
+                            fields.subagent_description = first_string(input, &["description"]);
+                            fields.subagent_prompt = first_string(input, &["prompt"]);
+                            fields.text = fields
+                                .subagent_description
+                                .clone()
+                                .or_else(|| fields.subagent_prompt.clone());
+                        }
                     }
                     fields.event_type = match fields.tool_name.as_deref() {
+                        Some("Task") => Some("subagent_call".to_string()),
                         Some(tool) if is_shell_tool(tool) || fields.command.is_some() => {
                             Some("shell_command".to_string())
                         }
@@ -206,6 +222,7 @@ fn adapt_claude_code_event(value: &Value) -> AgentEventAdapterFields {
                 }
                 if part_type == "tool_result" {
                     fields.event_type = Some("tool_result".to_string());
+                    fields.tool_use_id = first_string(part, &["tool_use_id", "toolUseId"]);
                     fields.text = agent_text_from_content(part);
                     break;
                 }

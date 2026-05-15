@@ -74,3 +74,7 @@ export async function searchJsonl(filePath: string, query: string): Promise<Sear
 export async function cancelSearch(): Promise<void> {
   return invoke("cancel_search");
 }
+
+export async function listSystemFonts(): Promise<string[]> {
+  return invoke("list_system_fonts");
+}

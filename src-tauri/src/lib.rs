@@ -11,10 +11,11 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::{BufRead, BufReader, Seek, SeekFrom},
     path::Path,
+    process::Command,
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
@@ -163,6 +164,10 @@ struct AgentEvent {
     event_type: String,
     provider: Option<String>,
     tool_name: Option<String>,
+    tool_use_id: Option<String>,
+    subagent_type: Option<String>,
+    subagent_description: Option<String>,
+    subagent_prompt: Option<String>,
     command: Option<String>,
     file_paths: Vec<String>,
     status: Option<String>,
@@ -943,6 +948,42 @@ fn cancel_search(state: State<AppState>) {
 }
 
 #[tauri::command]
+fn list_system_fonts() -> Vec<String> {
+    let output = Command::new("fc-list").arg(":").arg("family").output();
+    let mut fonts = output
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+        .unwrap_or_default()
+        .lines()
+        .flat_map(|line| line.split(','))
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+
+    fonts.extend(
+        [
+            "Arial",
+            "Inter",
+            "Noto Sans",
+            "Noto Serif",
+            "Noto Sans Mono",
+            "DejaVu Sans",
+            "DejaVu Sans Mono",
+            "JetBrains Mono",
+            "Fira Code",
+            "Menlo",
+            "Consolas",
+        ]
+        .into_iter()
+        .map(str::to_string),
+    );
+    fonts.sort_by_key(|name| name.to_lowercase());
+    fonts.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+    fonts
+}
+
+#[tauri::command]
 fn read_agent_session(
     file_path: String,
     log_source: Option<String>,
@@ -955,6 +996,7 @@ fn read_agent_session(
     let mut byte_offset = 0u64;
     let mut events = Vec::new();
     let mut sessions = HashSet::new();
+    let mut subagent_calls: HashMap<String, AgentEvent> = HashMap::new();
 
     loop {
         line.clear();
@@ -978,7 +1020,29 @@ fn read_agent_session(
                 "raw": trimmed,
             }),
         };
-        let event = agent_event_from_value(value, line_number, byte_offset, source);
+        let mut event = agent_event_from_value(value, line_number, byte_offset, source);
+        if event.event_type == "tool_result" {
+            if let Some(call) = event
+                .tool_use_id
+                .as_ref()
+                .and_then(|tool_use_id| subagent_calls.get(tool_use_id))
+            {
+                event.event_type = "subagent_result".to_string();
+                event.tool_name = event.tool_name.or_else(|| call.tool_name.clone());
+                event.subagent_type = event.subagent_type.or_else(|| call.subagent_type.clone());
+                event.subagent_description = event
+                    .subagent_description
+                    .or_else(|| call.subagent_description.clone());
+                event.subagent_prompt = event
+                    .subagent_prompt
+                    .or_else(|| call.subagent_prompt.clone());
+            }
+        }
+        if event.event_type == "subagent_call" {
+            if let Some(tool_use_id) = &event.tool_use_id {
+                subagent_calls.insert(tool_use_id.clone(), event.clone());
+            }
+        }
         if let Some(session_id) = &event.session_id {
             sessions.insert(session_id.clone());
         }
@@ -1810,6 +1874,12 @@ fn agent_event_from_value(
     let adapter_fields = adapt_agent_event(&value, source);
     let role = adapter_fields.role.or_else(|| agent_role(&value));
     let tool_name = adapter_fields.tool_name.or_else(|| agent_tool_name(&value));
+    let tool_use_id = adapter_fields.tool_use_id.or_else(|| {
+        first_string(
+            &value,
+            &["tool_use_id", "toolUseId", "tool_call_id", "toolCallId"],
+        )
+    });
     let command = adapter_fields.command.or_else(|| agent_command(&value));
     let text = adapter_fields.text.or_else(|| agent_text(&value));
     let file_paths = if adapter_fields.file_paths.is_empty() {
@@ -1866,6 +1936,10 @@ fn agent_event_from_value(
         event_type,
         provider,
         tool_name,
+        tool_use_id,
+        subagent_type: adapter_fields.subagent_type,
+        subagent_description: adapter_fields.subagent_description,
+        subagent_prompt: adapter_fields.subagent_prompt,
         command,
         file_paths,
         status,
@@ -2190,7 +2264,8 @@ pub fn run() {
             read_record,
             read_agent_session,
             search_jsonl,
-            cancel_search
+            cancel_search,
+            list_system_fonts
         ])
         .run(tauri::generate_context!())
         .expect("error while running PromptLens");
@@ -2502,6 +2577,77 @@ mod tests {
         assert_eq!(result.events[0].command.as_deref(), Some("npm test"));
         assert_eq!(result.events[1].event_type, "tool_result");
         assert_eq!(result.events[1].text.as_deref(), Some("tests passed"));
+    }
+
+    #[test]
+    fn claude_code_adapter_links_task_subagent_call_and_result() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "type": "assistant",
+                "sessionId": "claude-1",
+                "message": {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "toolu_subagent_1",
+                        "name": "Task",
+                        "input": {
+                            "subagent_type": "explorer",
+                            "description": "Inspect session parser",
+                            "prompt": "Find where Claude sessions are parsed."
+                        }
+                    }]
+                }
+            })
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "type": "user",
+                "sessionId": "claude-1",
+                "message": {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_subagent_1",
+                        "content": "Parser lives in src-tauri/src/lib.rs"
+                    }]
+                }
+            })
+        )
+        .unwrap();
+
+        let result = read_agent_session(
+            file.path().to_string_lossy().to_string(),
+            Some("claude_code".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(result.events[0].event_type, "subagent_call");
+        assert_eq!(
+            result.events[0].tool_use_id.as_deref(),
+            Some("toolu_subagent_1")
+        );
+        assert_eq!(result.events[0].subagent_type.as_deref(), Some("explorer"));
+        assert_eq!(
+            result.events[0].subagent_description.as_deref(),
+            Some("Inspect session parser")
+        );
+        assert_eq!(result.events[1].event_type, "subagent_result");
+        assert_eq!(result.events[1].subagent_type.as_deref(), Some("explorer"));
+        assert_eq!(
+            result.events[1].subagent_description.as_deref(),
+            Some("Inspect session parser")
+        );
+        assert_eq!(
+            result.events[1].text.as_deref(),
+            Some("Parser lives in src-tauri/src/lib.rs")
+        );
     }
 
     #[test]

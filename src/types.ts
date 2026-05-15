@@ -143,6 +143,8 @@ export type AgentEventType =
   | "assistant_message"
   | "tool_call"
   | "tool_result"
+  | "subagent_call"
+  | "subagent_result"
   | "shell_command"
   | "file_read"
   | "file_write"
@@ -167,6 +169,10 @@ export type AgentEvent = {
   eventType: AgentEventType | string;
   provider?: string;
   toolName?: string;
+  toolUseId?: string;
+  subagentType?: string;
+  subagentDescription?: string;
+  subagentPrompt?: string;
   command?: string;
   filePaths: string[];
   status?: string;
