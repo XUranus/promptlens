@@ -10,6 +10,7 @@ import type {
   LogSummary,
   ModelPricing,
   ProgressEvent,
+  ScanChunkPayload,
   SearchResult,
 } from "../types";
 import {
@@ -36,12 +37,14 @@ import type {
   MessageViewMode,
   RightTab,
   SessionGroup,
+  SessionTab,
   SortKey,
   SortOrder,
   Theme,
   WorkspaceTab,
 } from "./types";
 import {
+  createMainSessionTab,
   LEFT_DEFAULT,
   RIGHT_DEFAULT,
   THEME_KEY,
@@ -54,6 +57,7 @@ import {
   cancelSearch,
   clearScanCache,
   computeAnalytics,
+  detectLogSource,
   exportRecords,
   getCacheInfo,
   getFileStatus,
@@ -61,6 +65,7 @@ import {
   listSystemFonts,
   openFileDialog,
   readAgentSession,
+  readAgentSessionIncremental,
   readRecord,
   saveTextFile,
   scanJsonl,
@@ -78,12 +83,18 @@ export interface Toast { id: number; message: string; kind: ToastKind; }
 
 let toastId = 0;
 
+interface SourceConfirmDialog {
+  filePath: string;
+  detectedSource: LogSource | null;
+}
+
 interface AppState {
   theme: Theme;
   settings: AppSettings;
   messageViewMode: MessageViewMode;
   settingsOpen: boolean;
   imagePreview: string | null;
+  sourceConfirmDialog: SourceConfirmDialog | null;
   error: string | null;
   toasts: Toast[];
   liveMode: boolean;
@@ -108,6 +119,7 @@ interface AppState {
   setMessageViewMode: (m: MessageViewMode) => void;
   setSettingsOpen: (v: boolean | ((prev: boolean) => boolean)) => void;
   setImagePreview: (v: string | null) => void;
+  setSourceConfirmDialog: (v: SourceConfirmDialog | null) => void;
   setError: (v: string | null) => void;
   addToast: (message: string, kind?: ToastKind) => void;
   removeToast: (id: number) => void;
@@ -138,6 +150,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   messageViewMode: loadMessageViewMode(),
   settingsOpen: false,
   imagePreview: null,
+  sourceConfirmDialog: null,
   error: null,
   toasts: [],
   liveMode: false,
@@ -162,6 +175,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setMessageViewMode: (m) => set({ messageViewMode: m }),
   setSettingsOpen: (v) => set((s) => ({ settingsOpen: typeof v === "function" ? v(s.settingsOpen) : v })),
   setImagePreview: (v) => set({ imagePreview: v }),
+  setSourceConfirmDialog: (v) => set({ sourceConfirmDialog: v }),
   setError: (v) => set({ error: v }),
   addToast: (message, kind = "info") => {
     const id = ++toastId;
@@ -235,6 +249,11 @@ interface WorkspaceState {
   // Actions
   setActiveTabId: (id: string | null) => void;
   updateActiveTab: (patch: Partial<WorkspaceTab>) => void;
+  updateActiveSessionTab: (patch: Partial<SessionTab>) => void;
+  handleSessionTabSwitch: (sessionTabId: string) => void;
+  closeSessionTab: (sessionTabId: string) => void;
+  closeAllSessionTabs: () => void;
+  closeOtherSessionTabs: (keepSessionTabId: string) => void;
   setLoading: (v: boolean) => void;
   setSearching: (v: boolean) => void;
   setScanProgress: (v: ProgressEvent | null) => void;
@@ -254,6 +273,8 @@ interface WorkspaceState {
   handleOpenSource: (source: LogSource) => Promise<void>;
   handleTabSwitch: (tabId: string) => void;
   handleCloseTab: (tabId: string) => void;
+  closeAllTabs: () => void;
+  closeOtherTabs: (keepTabId: string) => void;
   jumpToResult: (result: SearchResult, file: FileScanResult | null) => Promise<void>;
   jumpToAgentEvent: (event: AgentEvent, file: FileScanResult | null) => Promise<void>;
   moveSelection: (delta: number, filtered: LogSummary[]) => void;
@@ -281,6 +302,84 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((tab) => (tab.id === s.activeTabId ? { ...tab, ...patch } : tab)),
     })),
+  updateActiveSessionTab: (patch) =>
+    set((s) => ({
+      tabs: s.tabs.map((tab) => {
+        if (tab.id !== s.activeTabId) return tab;
+        return {
+          ...tab,
+          sessionTabs: tab.sessionTabs.map((st) =>
+            st.id === tab.activeSessionTabId ? { ...st, ...patch } : st,
+          ),
+        };
+      }),
+    })),
+  handleSessionTabSwitch: (sessionTabId) => {
+    set((s) => ({
+      tabs: s.tabs.map((tab) => {
+        if (tab.id !== s.activeTabId) return tab;
+        // Create subagent tab if it doesn't exist yet
+        if (sessionTabId !== "main" && !tab.sessionTabs.some((st) => st.id === sessionTabId)) {
+          const agentId = sessionTabId.replace(/^subagent:/, "");
+          const sub = tab.agentSession?.subagentSessions.find((ss) => ss.agentId === agentId);
+          if (sub) {
+            const newTab: SessionTab = {
+              id: sessionTabId,
+              kind: "subagent",
+              label: sub.description || sub.agentType || sub.agentId,
+              agentId: sub.agentId,
+              selected: null,
+              detail: null,
+              compareBase: null,
+              searchTerm: "",
+              searchResults: [],
+            };
+            return { ...tab, sessionTabs: [...tab.sessionTabs, newTab], activeSessionTabId: sessionTabId };
+          }
+        }
+        return { ...tab, activeSessionTabId: sessionTabId };
+      }),
+    }));
+    if (sessionTabId !== "main") {
+      useAppStore.getState().setLeftTab("timeline");
+      useAppStore.getState().setSelectedAgentEvent(null);
+    }
+  },
+  closeSessionTab: (sessionTabId) => {
+    set((s) => ({
+      tabs: s.tabs.map((tab) => {
+        if (tab.id !== s.activeTabId) return tab;
+        const remaining = tab.sessionTabs.filter((st) => st.id !== sessionTabId);
+        if (!remaining.length) return tab;
+        const newActive = tab.activeSessionTabId === sessionTabId
+          ? remaining[0].id
+          : tab.activeSessionTabId;
+        return { ...tab, sessionTabs: remaining, activeSessionTabId: newActive };
+      }),
+    }));
+  },
+  closeAllSessionTabs: () => {
+    set((s) => ({
+      tabs: s.tabs.map((tab) => {
+        if (tab.id !== s.activeTabId) return tab;
+        const main = tab.sessionTabs.find((st) => st.id === "main");
+        return main ? { ...tab, sessionTabs: [main], activeSessionTabId: "main" } : tab;
+      }),
+    }));
+  },
+  closeOtherSessionTabs: (keepSessionTabId) => {
+    set((s) => ({
+      tabs: s.tabs.map((tab) => {
+        if (tab.id !== s.activeTabId) return tab;
+        const kept = tab.sessionTabs.find((st) => st.id === keepSessionTabId);
+        if (!kept) return tab;
+        // Always keep main too
+        const main = tab.sessionTabs.find((st) => st.id === "main");
+        const sessionTabs = main && main.id !== keepSessionTabId ? [main, kept] : [kept];
+        return { ...tab, sessionTabs, activeSessionTabId: keepSessionTabId };
+      }),
+    }));
+  },
   setLoading: (v) => set({ loading: v }),
   setSearching: (v) => set({ searching: v }),
   setScanProgress: (v) => set({ scanProgress: v }),
@@ -295,41 +394,100 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     app.setSelectedAgentEvent(null);
     if (!options?.quiet) app.setError(null);
     set({ loading: true, scanProgress: null });
+
+    // Yield to let the loading overlay render before heavy work starts
+    await new Promise((r) => setTimeout(r, 50));
+
+    const scanningFilePath = path;
+
+    // Register chunk listener BEFORE starting scan so events are captured
+    const unlistenChunk = listen<ScanChunkPayload>("scan-chunk", (event) => {
+      const chunk = event.payload;
+      if (chunk.filePath !== scanningFilePath) return;
+      set((s) => {
+        const tab = s.tabs.find((t) => t.id === chunk.filePath);
+        if (!tab) return s;
+        return {
+          tabs: s.tabs.map((t) =>
+            t.id === chunk.filePath
+              ? { ...t, file: { ...t.file, summaries: [...t.file.summaries, ...chunk.summaries] } }
+              : t,
+          ),
+        };
+      });
+    });
+
     try {
-      const result = await scanJsonl(path, source);
-      set((s) => ({ recentFiles: rememberRecentFile(result.filePath) }));
-      // createTabFromScan inline
-      const first = result.summaries[0] ?? null;
-      const agentSession = await readAgentSession(result.filePath, source).catch(() => null);
-      const detail = first ? await readRecord(result.filePath, first.byteOffset, first.lineNumber) : null;
+      // Create tab immediately with empty summaries
+      const emptyFile: FileScanResult = {
+        filePath: path,
+        fileName: path.split(/[/\\]/).pop() ?? path,
+        fileSize: 0,
+        totalLines: 0,
+        validRecords: 0,
+        invalidRecords: 0,
+        durationMs: 0,
+        cancelled: false,
+        cacheHit: false,
+        summaries: [],
+      };
       const newTab: WorkspaceTab = {
-        id: result.filePath,
+        id: path,
         source,
-        file: result,
-        selected: first,
-        detail,
-        compareBase: null,
-        searchTerm: "",
-        searchResults: [],
+        file: emptyFile,
+        agentSession: null,
+        sessionTabs: [createMainSessionTab()],
+        activeSessionTabId: "main",
         providerFilter: "",
         modelFilter: "",
         statusFilter: "",
         issueOnly: false,
         traceFilter: "",
         lastSearchIndexed: null,
-        agentSession,
         newLineNumbers: [],
-        lastScanMs: result.durationMs,
+        lastScanMs: null,
         lastSearchMs: null,
       };
       set((s) => ({
         tabs: [newTab, ...s.tabs.filter((t) => t.id !== newTab.id)],
         activeTabId: newTab.id,
       }));
+      set((s) => ({ recentFiles: rememberRecentFile(path) }));
+
+      // Run scan — chunks arrive via events during the scan
+      const result = await scanJsonl(path, source);
+
+      // Finalize: update file metadata from result, use accumulated summaries
+      const tab = get().tabs.find((t) => t.id === path);
+      const file: FileScanResult = {
+        ...result,
+        summaries: tab?.file.summaries.length ? tab.file.summaries : result.summaries,
+      };
+      const first = file.summaries[0] ?? null;
+
+      // Load agent session and first record detail in background
+      const [agentSession, detail] = await Promise.all([
+        readAgentSession(result.filePath, source).catch(() => null),
+        first ? readRecord(result.filePath, first.byteOffset, first.lineNumber).catch(() => null) : Promise.resolve(null),
+      ]);
+
+      // Build session tabs: main only (subagent tabs opened on demand via double-click)
+      const sessionTabs: SessionTab[] = [createMainSessionTab()];
+
+      get().updateActiveTab({
+        file,
+        agentSession,
+        sessionTabs,
+        activeSessionTabId: "main",
+        lastScanMs: result.durationMs,
+      });
+      // Set selected/detail on the main session tab
+      get().updateActiveSessionTab({ selected: first, detail });
       if (result.cancelled) app.setError("Scan was cancelled. Partial results are shown.");
     } catch (err) {
       if (!options?.quiet) app.setError(err instanceof Error ? err.message : String(err));
     } finally {
+      void unlistenChunk.then((fn) => fn());
       set({ loading: false, scanProgress: null });
     }
   },
@@ -339,13 +497,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const file = tab?.file ?? null;
     if (!file) return;
     useAppStore.getState().setSelectedAgentEvent(null);
+    get().updateActiveSessionTab({ selected: summary, detail: null });
     get().updateActiveTab({
-      selected: summary,
-      detail: null,
       newLineNumbers: (tab?.newLineNumbers ?? []).filter((n) => n !== summary.lineNumber),
     });
     try {
-      get().updateActiveTab({ detail: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
+      get().updateActiveSessionTab({ detail: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
     } catch (err) {
       useAppStore.getState().setError(err instanceof Error ? err.message : String(err));
     }
@@ -355,7 +512,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const file = get().tabs.find((t) => t.id === get().activeTabId)?.file ?? null;
     if (!file) return;
     try {
-      get().updateActiveTab({ compareBase: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
+      get().updateActiveSessionTab({ compareBase: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
       useAppStore.getState().setRightTab("diff");
     } catch (err) {
       useAppStore.getState().setError(err instanceof Error ? err.message : String(err));
@@ -365,18 +522,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   handleSearch: async (mode = "substring") => {
     const tab = get().tabs.find((t) => t.id === get().activeTabId);
     const file = tab?.file ?? null;
-    const term = tab?.searchTerm ?? "";
+    const sessionTab = tab?.sessionTabs.find((st) => st.id === tab.activeSessionTabId);
+    const term = sessionTab?.searchTerm ?? "";
     if (!file || !term.trim()) return;
     set({ searching: true, searchProgress: null });
     get().updateActiveTab({ lastSearchMs: null, lastSearchIndexed: null });
     useAppStore.getState().setError(null);
     try {
       const response = await searchJsonl(file.filePath, term, mode);
-      get().updateActiveTab({
-        searchResults: response.results,
-        lastSearchMs: response.durationMs,
-        lastSearchIndexed: response.indexed,
-      });
+      get().updateActiveSessionTab({ searchResults: response.results });
+      get().updateActiveTab({ lastSearchMs: response.durationMs, lastSearchIndexed: response.indexed });
       if (response.truncated) useAppStore.getState().setError("Search stopped after 1,000 matches. Refine the query to narrow results.");
       if (response.cancelled) useAppStore.getState().setError("Search was cancelled. Partial results are shown.");
     } catch (err) {
@@ -403,9 +558,31 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const result = await scanJsonlIncremental(file.filePath, file.fileSize, file.totalLines);
       const appendedLines = result.summaries.map((s) => s.lineNumber);
-      const nextAgentSession = await readAgentSession(file.filePath, tab?.source ?? "audit").catch(
-        () => tab?.agentSession ?? null,
-      );
+
+      // Incremental agent session: only read new lines
+      let agentSession = tab?.agentSession ?? null;
+      try {
+        const events = agentSession?.events;
+        const lastEvent = events?.length ? events[events.length - 1] : undefined;
+        const incrResult = await readAgentSessionIncremental(
+          file.filePath,
+          lastEvent?.byteOffset ?? 0,
+          lastEvent?.lineNumber ?? 0,
+          tab?.source ?? "audit",
+        );
+        if (agentSession && incrResult.events.length) {
+          agentSession = {
+            ...agentSession,
+            events: [...agentSession.events, ...incrResult.events],
+            totalEvents: agentSession.totalEvents + incrResult.totalEvents,
+          };
+        } else if (!agentSession && incrResult.events.length) {
+          agentSession = await readAgentSession(file.filePath, tab?.source ?? "audit").catch(() => null);
+        }
+      } catch {
+        // Fallback: keep existing session
+      }
+
       get().updateActiveTab({
         file: {
           ...file,
@@ -419,7 +596,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           summaries: [...file.summaries, ...result.summaries],
         },
         lastScanMs: result.durationMs,
-        agentSession: nextAgentSession,
+        agentSession,
         newLineNumbers: [...(tab?.newLineNumbers ?? []), ...appendedLines],
       });
       set({ fileStatus: { exists: true, fileSize: result.fileSize, modified: result.modified } });
@@ -481,7 +658,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   handleOpenSource: async (source) => {
     useAppStore.getState().setOpenSource(source);
     const path = await openFileDialog();
-    if (path) await get().loadFile(path, { source });
+    if (!path) return;
+    // If user picked a specific source from menu, use it directly
+    if (source !== "audit") {
+      await get().loadFile(path, { source });
+      return;
+    }
+    // Auto-detect and show confirmation dialog
+    try {
+      const detected = await detectLogSource(path);
+      if (detected) {
+        useAppStore.getState().setSourceConfirmDialog({ filePath: path, detectedSource: detected });
+      } else {
+        await get().loadFile(path, { source: "audit" });
+      }
+    } catch {
+      await get().loadFile(path, { source: "audit" });
+    }
   },
 
   handleTabSwitch: (tabId) => {
@@ -501,6 +694,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         tabs: next,
         activeTabId: s.activeTabId === tabId ? (next[0]?.id ?? null) : s.activeTabId,
       };
+    });
+  },
+  closeAllTabs: () => set({ tabs: [], activeTabId: null }),
+  closeOtherTabs: (keepTabId) => {
+    set((s) => {
+      const kept = s.tabs.find((t) => t.id === keepTabId);
+      return kept ? { tabs: [kept], activeTabId: keepTabId } : { tabs: [], activeTabId: null };
     });
   },
 
@@ -531,7 +731,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   moveSelection: (delta, filtered) => {
     const tab = get().tabs.find((t) => t.id === get().activeTabId);
-    const selected = tab?.selected ?? null;
+    const selected = tab?.sessionTabs.find((st) => st.id === tab.activeSessionTabId)?.selected ?? null;
     if (!selected || filtered.length === 0) return;
     const index = filtered.findIndex((item) => item.id === selected.id);
     const next = filtered[Math.max(0, Math.min(filtered.length - 1, index + delta))];
@@ -542,8 +742,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const saved = loadWorkspace();
     if (!saved.paths.length) return;
     void (async () => {
-      for (const path of saved.paths.slice(0, 8)) {
-        await get().loadFile(path, { quiet: true });
+      for (let i = 0; i < saved.paths.slice(0, 8).length; i++) {
+        const path = saved.paths[i];
+        const source = saved.sources[i] ?? "audit";
+        await get().loadFile(path, { quiet: true, source });
       }
       if (saved.activePath) set({ activeTabId: saved.activePath });
     })();
@@ -563,7 +765,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 let restoredWorkspace = false;
 useWorkspaceStore.subscribe((state) => {
   if (!restoredWorkspace) return;
-  saveWorkspace(state.tabs.map((t) => t.file.filePath), state.activeTabId);
+  saveWorkspace(state.tabs.map((t) => ({ filePath: t.file.filePath, source: t.source })), state.activeTabId);
 });
 
 // Expose for init

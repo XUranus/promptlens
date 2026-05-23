@@ -168,6 +168,7 @@ export type AgentEvent = {
   role?: string;
   eventType: AgentEventType | string;
   provider?: string;
+  model?: string;
   toolName?: string;
   toolUseId?: string;
   subagentType?: string;
@@ -177,9 +178,23 @@ export type AgentEvent = {
   filePaths: string[];
   status?: string;
   durationMs?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  isError?: boolean;
+  toolResultContent?: unknown;
+  isSidechain?: boolean;
+  agentId?: string;
   preview?: string;
   text?: string;
   raw: unknown;
+};
+
+export type SubagentSession = {
+  agentId: string;
+  agentType?: string;
+  description?: string;
+  toolUseId?: string;
+  events: AgentEvent[];
 };
 
 export type AgentSessionResult = {
@@ -188,6 +203,7 @@ export type AgentSessionResult = {
   totalEvents: number;
   sessions: string[];
   events: AgentEvent[];
+  subagentSessions: SubagentSession[];
 };
 
 export type ModelPricing = {
@@ -260,4 +276,17 @@ export type ComputedAnalytics = {
   issues: IssueRecord[];
   sessions: SessionGroup[];
   filterOptions: FilterOptions;
+};
+
+export type ScanChunkPayload = {
+  filePath: string;
+  summaries: LogSummary[];
+  lineFrom: number;
+  lineTo: number;
+};
+
+export type AgentSessionIncrementalResult = {
+  events: AgentEvent[];
+  nextLineNumber: number;
+  totalEvents: number;
 };

@@ -14,22 +14,23 @@ import {
   WORKSPACE_KEY,
 } from "./types";
 
-export function loadWorkspace(): { paths: string[]; activePath: string | null } {
+export function loadWorkspace(): { paths: string[]; sources: LogSource[]; activePath: string | null } {
   try {
     const raw = localStorage.getItem(WORKSPACE_KEY);
-    if (!raw) return { paths: [], activePath: null };
-    const parsed = JSON.parse(raw) as { paths?: string[]; activePath?: string | null };
-    return {
-      paths: Array.isArray(parsed.paths) ? parsed.paths : [],
-      activePath: parsed.activePath ?? null,
-    };
+    if (!raw) return { paths: [], sources: [], activePath: null };
+    const parsed = JSON.parse(raw) as { paths?: string[]; sources?: LogSource[]; activePath?: string | null };
+    const paths = Array.isArray(parsed.paths) ? parsed.paths : [];
+    const sources = Array.isArray(parsed.sources) ? parsed.sources : paths.map(() => "audit" as LogSource);
+    return { paths, sources, activePath: parsed.activePath ?? null };
   } catch {
-    return { paths: [], activePath: null };
+    return { paths: [], sources: [], activePath: null };
   }
 }
 
-export function saveWorkspace(paths: string[], activePath: string | null) {
-  localStorage.setItem(WORKSPACE_KEY, JSON.stringify({ paths, activePath }));
+export function saveWorkspace(tabs: Array<{ filePath: string; source: LogSource }>, activePath: string | null) {
+  const paths = tabs.map((t) => t.filePath);
+  const sources = tabs.map((t) => t.source);
+  localStorage.setItem(WORKSPACE_KEY, JSON.stringify({ paths, sources, activePath }));
 }
 
 export function loadTheme(): Theme {
@@ -98,6 +99,5 @@ export function leftTabLabel(tab: LeftTab) {
   if (tab === "sessions") return "Sessions";
   if (tab === "analytics") return "Analytics";
   if (tab === "issues") return "Issues";
-  if (tab === "search") return "Search";
   return "Export";
 }

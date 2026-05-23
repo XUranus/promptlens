@@ -80,6 +80,39 @@
   font-weight: 700;
 }
 
+.debug-view details {
+  margin: 4px 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.debug-view details summary {
+  padding: 8px 12px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+  background: var(--glass-bg-subtle);
+  transition: color 150ms var(--ease);
+}
+
+.debug-view details summary:hover {
+  color: var(--text-secondary);
+}
+
+.debug-view details[open] summary {
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.debug-view details pre {
+  margin: 0;
+  padding: 14px;
+}
+
 /* ============================================================
    JSON Tree
    ============================================================ */

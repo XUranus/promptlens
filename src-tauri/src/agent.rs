@@ -80,6 +80,53 @@ pub(crate) fn agent_event_from_value(
         .forced_agent_provider()
         .map(str::to_string)
         .or_else(|| agent_provider(&value));
+    let model = first_string(&value, &["model", "model_name", "modelName"]).or_else(|| {
+        value
+            .get("message")
+            .and_then(|m| first_string(m, &["model", "model_name", "modelName"]))
+    });
+    let usage = value
+        .get("usage")
+        .or_else(|| value.get("message").and_then(|m| m.get("usage")));
+    let input_tokens = usage.and_then(|u| {
+        first_u64(
+            u,
+            &[
+                "input_tokens",
+                "inputTokens",
+                "prompt_tokens",
+                "promptTokens",
+            ],
+        )
+    });
+    let output_tokens = usage.and_then(|u| {
+        first_u64(
+            u,
+            &[
+                "output_tokens",
+                "outputTokens",
+                "completion_tokens",
+                "completionTokens",
+            ],
+        )
+    });
+    let is_sidechain = value
+        .get("isSidechain")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let agent_id = first_string(&value, &["agentId", "agent_id"]);
+    let tool_result_content = value.get("toolUseResult").cloned();
+    let is_error = adapter_fields.is_error
+        || value
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(Value::as_array)
+            .map(|parts| {
+                parts
+                    .iter()
+                    .any(|p| p.get("is_error").and_then(Value::as_bool).unwrap_or(false))
+            })
+            .unwrap_or(false);
     let event_type = adapter_fields.event_type.unwrap_or_else(|| {
         detect_agent_event_type(
             &value,
@@ -117,6 +164,7 @@ pub(crate) fn agent_event_from_value(
         role,
         event_type,
         provider,
+        model,
         tool_name,
         tool_use_id,
         subagent_type: adapter_fields.subagent_type,
@@ -126,6 +174,12 @@ pub(crate) fn agent_event_from_value(
         file_paths,
         status,
         duration_ms,
+        input_tokens,
+        output_tokens,
+        is_error,
+        tool_result_content,
+        is_sidechain,
+        agent_id,
         preview,
         text,
         raw: value,
@@ -248,6 +302,70 @@ fn agent_provider(value: &Value) -> Option<String> {
                 detect_provider(value)
             }
         })
+}
+
+pub(crate) fn detect_source_from_value(value: &Value) -> Option<LogSource> {
+    // Check explicit provider/source/agent/app keys
+    if let Some(provider) = first_string(value, &["provider", "source", "agent", "app"]) {
+        let lower = provider.to_lowercase();
+        if lower.contains("claude_code") || lower.contains("claude-code") {
+            return Some(LogSource::ClaudeCode);
+        }
+        if lower.contains("opencode") {
+            return Some(LogSource::OpenCode);
+        }
+        if lower.contains("openclaw") || lower.contains("opwnclaw") {
+            return Some(LogSource::OpenClaw);
+        }
+        if lower.contains("codex") {
+            return Some(LogSource::Codex);
+        }
+    }
+
+    // Check structural signals
+    let has_session_id = value.get("sessionId").is_some();
+    let has_message = value.get("message").is_some();
+    let has_is_sidechain = value.get("isSidechain").is_some();
+    let has_type_field = value.get("type").and_then(Value::as_str);
+    let has_content_array = value
+        .get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_array())
+        .is_some();
+
+    // Claude Code: sessionId + message, or isSidechain, or type=user/assistant with message.content
+    if has_is_sidechain || (has_session_id && has_message) {
+        return Some(LogSource::ClaudeCode);
+    }
+    if matches!(
+        has_type_field,
+        Some(
+            "user"
+                | "assistant"
+                | "system"
+                | "permission-mode"
+                | "last-prompt"
+                | "ai-title"
+                | "agent-name"
+        )
+    ) && has_content_array
+    {
+        return Some(LogSource::ClaudeCode);
+    }
+
+    // Raw string matching for other sources
+    let raw = value.to_string().to_lowercase();
+    if raw.contains("exec_command") || raw.contains("\"codex\"") {
+        return Some(LogSource::Codex);
+    }
+    if raw.contains("opencode") {
+        return Some(LogSource::OpenCode);
+    }
+    if raw.contains("openclaw") || raw.contains("opwnclaw") {
+        return Some(LogSource::OpenClaw);
+    }
+
+    None
 }
 
 fn agent_tool_name(value: &Value) -> Option<String> {

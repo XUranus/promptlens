@@ -3,7 +3,7 @@ import { CheckCircle, XCircle, AlertTriangle, HelpCircle, Copy } from "lucide-re
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { copyJson, copyText, safeJson } from "../../lib/clipboard";
-import { formatLatency } from "../../lib/format";
+import { formatLatency, formatTokens } from "../../lib/format";
 import type { AgentEvent, NormalizedContent, NormalizedMessage, RecordDetail } from "../../types";
 import type { MessageViewMode } from "../types";
 import { agentEventLabel, agentEventTypeLabel, rawValueByKeys as rawValByKeys, rawTextByKeys as rawTxtByKeys } from "../analytics";
@@ -42,9 +42,11 @@ export function DetailView({
             {formatLatency(selected.latencyMs)}
           </p>
         </div>
-        <span className={`pill ${selected.status}`} title={selected.status}>
-          <StatusIcon status={selected.status} size={16} />
-        </span>
+        {selected.status === "success" || selected.status === "error" ? (
+          <span className={`pill ${selected.status}`} title={selected.status}>
+            <StatusIcon status={selected.status} size={16} />
+          </span>
+        ) : null}
       </div>
 
       {error ? (
@@ -160,9 +162,16 @@ function AgentEventDetailView({ event, detail }: { event: AgentEvent; detail: Re
       ) : null}
 
       {event.eventType === "tool_result" ? (
-        <section className="agent-detail-section">
-          <h2>{event.toolName ? `Tool Result · ${event.toolName}` : "Tool Result"}</h2>
-          {typeof toolResult === "string" ? <pre className="plain-text-block">{toolResult}</pre> : <JsonCode value={toolResult ?? event.raw} />}
+        <section className={`agent-detail-section${event.isError ? " error-section" : ""}`}>
+          <h2>{event.toolName ? `Tool Result · ${event.toolName}` : "Tool Result"}{event.isError ? " (error)" : ""}</h2>
+          <ToolResultContentView event={event} fallback={toolResult} />
+        </section>
+      ) : null}
+
+      {event.isError && event.eventType !== "tool_result" && event.status !== "error" ? (
+        <section className="agent-detail-section error-section">
+          <h2>Error</h2>
+          <pre className="plain-text-block">{statusText || event.preview || "Tool returned an error."}</pre>
         </section>
       ) : null}
 
@@ -223,13 +232,18 @@ function AgentEventSummary({ event, detail }: { event: AgentEvent; detail: Recor
   return (
     <section className="agent-summary-grid">
       <KeyValue label="Provider" value={event.provider || detail.summary.provider || "-"} />
+      {event.model ? <KeyValue label="Model" value={event.model} /> : null}
       <KeyValue label="Role" value={event.role || "-"} />
       <KeyValue label="Status" value={event.status || detail.summary.status || "-"} />
       <KeyValue label="Duration" value={formatLatency(event.durationMs ?? detail.summary.latencyMs)} />
+      {event.inputTokens ? <KeyValue label="Input tokens" value={formatTokens(event.inputTokens)} /> : null}
+      {event.outputTokens ? <KeyValue label="Output tokens" value={formatTokens(event.outputTokens)} /> : null}
       <KeyValue label="Turn" value={event.turnId || "-"} />
       <KeyValue label="Parent" value={event.parentId || "-"} />
       {event.toolUseId ? <KeyValue label="Tool use" value={event.toolUseId} /> : null}
       {event.subagentType ? <KeyValue label="Subagent" value={event.subagentType} /> : null}
+      {event.agentId ? <KeyValue label="Agent ID" value={event.agentId} /> : null}
+      {event.isSidechain ? <KeyValue label="Thread" value="sidechain" /> : null}
     </section>
   );
 }
@@ -239,6 +253,33 @@ function AgentOutputBlock({ title, text }: { title: string; text: string }) {
     <div className="agent-output-block">
       <h3>{title}</h3>
       <pre className="plain-text-block">{text}</pre>
+    </div>
+  );
+}
+
+function ToolResultContentView({ event, fallback }: { event: AgentEvent; fallback: unknown }) {
+  const trc = event.toolResultContent as Record<string, unknown> | undefined;
+  if (!trc) {
+    return typeof fallback === "string" ? <pre className="plain-text-block">{fallback}</pre> : <JsonCode value={fallback ?? event.raw} />;
+  }
+  const filePath = trc.filePath || trc.file;
+  const stdout = typeof trc.stdout === "string" ? trc.stdout : null;
+  const stderr = typeof trc.stderr === "string" ? trc.stderr : null;
+  const fileContent = typeof trc.content === "string" ? trc.content : null;
+  const structuredPatch = trc.structuredPatch;
+  const noOutput = trc.noOutputExpected === true;
+  return (
+    <div className="tool-result-detail">
+      {typeof filePath === "string" ? <KeyValue label="File" value={filePath} /> : null}
+      {typeof trc.type === "string" ? <KeyValue label="Type" value={trc.type} /> : null}
+      {typeof trc.status === "string" ? <KeyValue label="Status" value={trc.status} /> : null}
+      {trc.isImage === true ? <KeyValue label="Output" value="image" /> : null}
+      {noOutput && !stdout && !stderr && !fileContent ? <pre className="plain-text-block">No output expected</pre> : null}
+      {stdout ? <AgentOutputBlock title="Stdout" text={stdout} /> : null}
+      {stderr ? <AgentOutputBlock title="Stderr" text={stderr} /> : null}
+      {fileContent && !stdout ? <AgentOutputBlock title="File Content" text={fileContent} /> : null}
+      {structuredPatch ? <JsonCode value={structuredPatch} /> : null}
+      {!stdout && !stderr && !fileContent && !structuredPatch && !noOutput ? <JsonCode value={trc} /> : null}
     </div>
   );
 }

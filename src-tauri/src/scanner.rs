@@ -46,6 +46,8 @@ pub(crate) fn scan_jsonl_inner(
     let mut byte_offset = 0u64;
     let mut line = String::new();
     let mut cancelled = false;
+    let mut chunk_buffer: Vec<LogSummary> = Vec::new();
+    let mut chunk_start_line = 1usize;
 
     loop {
         if cancel_flag.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
@@ -86,22 +88,47 @@ pub(crate) fn scan_jsonl_inner(
         match serde_json::from_str::<Value>(trimmed) {
             Ok(value) => {
                 valid_records += 1;
-                summaries.push(summary_from_value(
-                    &value,
-                    total_lines,
-                    current_offset,
-                    None,
-                ));
+                let summary = summary_from_value(&value, total_lines, current_offset, None);
+                chunk_buffer.push(summary.clone());
+                summaries.push(summary);
             }
             Err(err) => {
                 invalid_records += 1;
-                summaries.push(invalid_line_summary(
-                    total_lines,
-                    current_offset,
-                    trimmed,
-                    &err,
-                ));
+                let summary = invalid_line_summary(total_lines, current_offset, trimmed, &err);
+                chunk_buffer.push(summary.clone());
+                summaries.push(summary);
             }
+        }
+
+        // Emit scan-chunk every 500 lines
+        if total_lines % 500 == 0 && !chunk_buffer.is_empty() {
+            if let Some(app) = app {
+                let _ = app.emit(
+                    "scan-chunk",
+                    ScanChunkPayload {
+                        file_path: file_path.clone(),
+                        summaries: chunk_buffer.drain(..).collect(),
+                        line_from: chunk_start_line,
+                        line_to: total_lines,
+                    },
+                );
+            }
+            chunk_start_line = total_lines + 1;
+        }
+    }
+
+    // Emit remaining summaries as final chunk
+    if !chunk_buffer.is_empty() {
+        if let Some(app) = app {
+            let _ = app.emit(
+                "scan-chunk",
+                ScanChunkPayload {
+                    file_path: file_path.clone(),
+                    summaries: chunk_buffer,
+                    line_from: chunk_start_line,
+                    line_to: total_lines,
+                },
+            );
         }
     }
 

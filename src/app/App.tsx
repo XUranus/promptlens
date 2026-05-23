@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Search, Filter as FilterIcon, X } from "lucide-react";
+import { Filter as FilterIcon, X, FolderOpen } from "lucide-react";
 import type { CSSProperties } from "react";
 import { copyJson } from "../lib/clipboard";
 import { cancelScan, cancelSearch, calculateCosts, computeAnalytics, startFileWatch, stopFileWatch, getFileStatus } from "../tauri";
 import type { ProgressEvent } from "../types";
 import { TitleBar } from "./components/TitleBar";
-import { ProgressStrip, WorkspaceTabs } from "./components/Workspace";
+import { StatusBar, WorkspaceTabs } from "./components/Workspace";
 import { LeftPanel } from "./components/LeftPanel";
 import { RightPanel } from "./components/RightPanel";
 import { DetailView } from "./components/CenterPanel";
 import { ToastContainer } from "./components/Toast";
+import { SourceConfirmDialog } from "./components/SourceConfirmDialog";
 import { useAppStore, useWorkspaceStore, markWorkspaceRestored } from "./store";
 import type { Filter, SortKey } from "./types";
+import { sourceBrandLabel } from "./types";
 import { LEFT_MAX, LEFT_MIN, CENTER_MIN, RIGHT_MIN, RIGHT_MAX_RATIO } from "./types";
 import { maxRightPanelWidth } from "./storage";
 import {
@@ -31,6 +33,7 @@ export function App() {
   const settings = useAppStore((s) => s.settings);
   const settingsOpen = useAppStore((s) => s.settingsOpen);
   const imagePreview = useAppStore((s) => s.imagePreview);
+  const sourceConfirmDialog = useAppStore((s) => s.sourceConfirmDialog);
   const error = useAppStore((s) => s.error);
   const toasts = useAppStore((s) => s.toasts);
   const liveMode = useAppStore((s) => s.liveMode);
@@ -68,12 +71,13 @@ export function App() {
 
   // Derived values via useMemo (stable references when deps don't change)
   const activeTab = useMemo(() => tabs.find((t) => t.id === activeTabId) ?? null, [tabs, activeTabId]);
+  const activeSessionTab = useMemo(() => activeTab?.sessionTabs.find((st) => st.id === activeTab.activeSessionTabId) ?? null, [activeTab]);
   const file = useMemo(() => activeTab?.file ?? null, [activeTab]);
-  const selected = useMemo(() => activeTab?.selected ?? null, [activeTab]);
-  const detail = useMemo(() => activeTab?.detail ?? null, [activeTab]);
-  const compareBase = useMemo(() => activeTab?.compareBase ?? null, [activeTab]);
-  const searchTerm = useMemo(() => activeTab?.searchTerm ?? "", [activeTab]);
-  const searchResults = useMemo(() => activeTab?.searchResults ?? [], [activeTab]);
+  const selected = useMemo(() => activeSessionTab?.selected ?? null, [activeSessionTab]);
+  const detail = useMemo(() => activeSessionTab?.detail ?? null, [activeSessionTab]);
+  const compareBase = useMemo(() => activeSessionTab?.compareBase ?? null, [activeSessionTab]);
+  const searchTerm = useMemo(() => activeSessionTab?.searchTerm ?? "", [activeSessionTab]);
+  const searchResults = useMemo(() => activeSessionTab?.searchResults ?? [], [activeSessionTab]);
   const providerFilter = useMemo(() => activeTab?.providerFilter ?? "", [activeTab]);
   const modelFilter = useMemo(() => activeTab?.modelFilter ?? "", [activeTab]);
   const statusFilter = useMemo(() => activeTab?.statusFilter ?? "", [activeTab]);
@@ -81,6 +85,16 @@ export function App() {
   const traceFilter = useMemo(() => activeTab?.traceFilter ?? "", [activeTab]);
   const lastSearchIndexed = useMemo(() => activeTab?.lastSearchIndexed ?? null, [activeTab]);
   const agentSession = useMemo(() => activeTab?.agentSession ?? null, [activeTab]);
+  const activeSessionTabId = activeTab?.activeSessionTabId ?? "main";
+  const filteredAgentSession = useMemo(() => {
+    if (!agentSession) return null;
+    if (activeSessionTabId === "main") {
+      return { ...agentSession, events: agentSession.events.filter((e) => !e.isSidechain && !e.agentId) };
+    }
+    const sub = agentSession.subagentSessions.find((s) => `subagent:${s.agentId}` === activeSessionTabId);
+    if (!sub) return agentSession;
+    return { ...agentSession, events: sub.events };
+  }, [agentSession, activeSessionTabId]);
   const newLineNumbers = useMemo(() => activeTab?.newLineNumbers ?? [], [activeTab]);
   const lastScanMs = useMemo(() => activeTab?.lastScanMs ?? null, [activeTab]);
   const lastSearchMs = useMemo(() => activeTab?.lastSearchMs ?? null, [activeTab]);
@@ -162,6 +176,15 @@ export function App() {
     return () => { clearTimeout(fadeTimer); clearTimeout(hideTimer); };
   }, [loading, file]);
 
+  // Reset leftTab to "records" when switching to an agent session while on a hidden tab
+  useEffect(() => {
+    const source = activeTab?.source ?? null;
+    const isAgentSession = source !== null && source !== "audit";
+    if (isAgentSession && (leftTab === "trace" || leftTab === "sessions")) {
+      app().setLeftTab("records");
+    }
+  }, [activeTab?.source, leftTab]);
+
   // Keyboard shortcuts
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -172,8 +195,8 @@ export function App() {
       }
       if (mod && event.key.toLowerCase() === "f") {
         event.preventDefault();
-        app().setLeftTab("search");
-        document.getElementById("file-search-input")?.focus();
+        app().setLeftTab("records");
+        document.querySelector<HTMLInputElement>(".records-search input")?.focus();
       }
       if (mod && event.key.toLowerCase() === "r") {
         event.preventDefault();
@@ -395,6 +418,7 @@ export function App() {
         }
       >
       <TitleBar
+        source={activeTab?.source ?? null}
         theme={theme}
         settings={settings}
         settingsOpen={settingsOpen}
@@ -417,93 +441,205 @@ export function App() {
         onExport={(kind) => void ws().handleExport(kind, filtered, analytics, issues, sessions)}
         onRawExport={(kind) => void ws().handleRawExport(kind, filtered)}
       />
-      <header className="toolbar">
-        <div className="search-box">
-          <Search size={15} />
-          <input value={query} onChange={(event) => app().setQuery(event.target.value)} placeholder="Filter list" />
-        </div>
-        <select value={filter} onChange={(event) => app().setFilter(event.target.value as Filter)}>
-          <option value="all">All</option>
-          <option value="error">Errors</option>
-          <option value="success">Success</option>
-          <option value="image">Images</option>
-          <option value="tool">Tools</option>
-        </select>
-        <select value={sortKey} onChange={(event) => app().setSortKey(event.target.value as SortKey)}>
-          <option value="time">Time</option>
-          <option value="latency">Latency</option>
-          <option value="tokens">Tokens</option>
-          <option value="model">Model</option>
-          <option value="status">Status</option>
-        </select>
-        <select value={providerFilter} onChange={(event) => ws().updateActiveTab({ providerFilter: event.target.value })}>
-          <option value="">Provider</option>
-          {filterOptions.providers.map((provider) => (
-            <option key={provider} value={provider}>{provider}</option>
-          ))}
-        </select>
-        <select value={modelFilter} onChange={(event) => ws().updateActiveTab({ modelFilter: event.target.value })}>
-          <option value="">Model</option>
-          {filterOptions.models.map((model) => (
-            <option key={model} value={model}>{model}</option>
-          ))}
-        </select>
-        <button
-          className={`icon-button ${issueOnly ? "active" : ""}`}
-          onClick={() => ws().updateActiveTab({ issueOnly: !issueOnly })}
-          title="Issue records only"
-        >
-          <FilterIcon size={16} />
-        </button>
-        <input
-          className="threshold-input"
-          value={latencyMin}
-          onChange={(event) => app().setLatencyMin(event.target.value)}
-          placeholder="min ms"
-          inputMode="numeric"
-        />
-        <input
-          className="threshold-input"
-          value={tokensMin}
-          onChange={(event) => app().setTokensMin(event.target.value)}
-          placeholder="min tokens"
-          inputMode="numeric"
-        />
-        <button
-          className={`icon-button live-toggle ${liveMode ? "active" : ""}`}
-          onClick={() => app().setLiveMode((v) => !v)}
-          title={liveMode ? "Disable live tail" : "Enable live tail"}
-          disabled={!file}
-        >
-          <span className={`live-dot ${liveMode ? "on" : ""}`} />
-          Live
-        </button>
-      </header>
-
-      {error ? (
-        <div className="error-banner" role="alert">
-          <span>{error}</span>
-          <button onClick={() => app().setError(null)} aria-label="Dismiss error">
-            <X size={14} />
-          </button>
-        </div>
-      ) : null}
-      {hasDiskChange ? (
-        <div className="warning-banner" role="alert">
-          <span>
-            {hasAppendOnlyChange
-              ? "Active file has appended records on disk."
-              : "Active file changed on disk. Rescan to refresh summaries."}
-          </span>
-          {hasAppendOnlyChange ? (
-            <button onClick={() => void ws().handleLoadAppendedRecords()} disabled={loading}>
-              Load appended records
+      {tabs.length === 0 ? (
+        <div className="landing">
+          <svg width="96" height="96" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect width="512" height="512" rx="112" fill="#1a1e2e"/>
+            <circle cx="228" cy="218" r="128" stroke="url(#pl-lens-landing)" strokeWidth="28"/>
+            <circle cx="228" cy="218" r="112" fill="rgba(74,123,247,0.08)"/>
+            <line x1="168" y1="190" x2="288" y2="190" stroke="#6ea8fe" strokeWidth="10" strokeLinecap="round" opacity="0.7"/>
+            <line x1="168" y1="218" x2="260" y2="218" stroke="#6ea8fe" strokeWidth="10" strokeLinecap="round" opacity="0.5"/>
+            <line x1="168" y1="246" x2="240" y2="246" stroke="#6ea8fe" strokeWidth="10" strokeLinecap="round" opacity="0.35"/>
+            <line x1="324" y1="316" x2="408" y2="400" stroke="url(#pl-handle-landing)" strokeWidth="32" strokeLinecap="round"/>
+            <defs>
+              <linearGradient id="pl-lens-landing" x1="140" y1="90" x2="316" y2="346">
+                <stop stopColor="#6ea8fe"/>
+                <stop offset="1" stopColor="#4a7bf7"/>
+              </linearGradient>
+              <linearGradient id="pl-handle-landing" x1="324" y1="316" x2="408" y2="400">
+                <stop stopColor="#8b95a5"/>
+                <stop offset="1" stopColor="#5a6370"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          <h1 className="landing-title">PromptLens</h1>
+          <p className="landing-subtitle">Local-first LLM log viewer</p>
+          <div className="landing-actions">
+            <button className="landing-btn" onClick={() => void ws().handleOpenSource(openSource)}>
+              <FolderOpen size={16} />
+              Open JSONL File
             </button>
-          ) : null}
+            <span className="landing-hint">or use <kbd>Ctrl O</kbd> from the menu above</span>
+          </div>
         </div>
-      ) : null}
-      {loading || searching || lastScanMs !== null || lastSearchMs !== null ? (
-        <ProgressStrip
+      ) : (
+        <>
+          <header className="toolbar">
+            <select value={filter} onChange={(event) => app().setFilter(event.target.value as Filter)}>
+              <option value="all">All</option>
+              <option value="error">Errors</option>
+              <option value="success">Success</option>
+              <option value="image">Images</option>
+              <option value="tool">Tools</option>
+            </select>
+            <select value={sortKey} onChange={(event) => app().setSortKey(event.target.value as SortKey)}>
+              <option value="time">Time</option>
+              <option value="latency">Latency</option>
+              <option value="tokens">Tokens</option>
+              <option value="model">Model</option>
+              <option value="status">Status</option>
+            </select>
+            <select value={providerFilter} onChange={(event) => ws().updateActiveTab({ providerFilter: event.target.value })}>
+              <option value="">Provider</option>
+              {filterOptions.providers.map((provider) => (
+                <option key={provider} value={provider}>{provider}</option>
+              ))}
+            </select>
+            <select value={modelFilter} onChange={(event) => ws().updateActiveTab({ modelFilter: event.target.value })}>
+              <option value="">Model</option>
+              {filterOptions.models.map((model) => (
+                <option key={model} value={model}>{model}</option>
+              ))}
+            </select>
+            <button
+              className={`icon-button ${issueOnly ? "active" : ""}`}
+              onClick={() => ws().updateActiveTab({ issueOnly: !issueOnly })}
+              title="Issue records only"
+            >
+              <FilterIcon size={16} />
+            </button>
+            <input
+              className="threshold-input"
+              value={latencyMin}
+              onChange={(event) => app().setLatencyMin(event.target.value)}
+              placeholder="min ms"
+              inputMode="numeric"
+            />
+            <input
+              className="threshold-input"
+              value={tokensMin}
+              onChange={(event) => app().setTokensMin(event.target.value)}
+              placeholder="min tokens"
+              inputMode="numeric"
+            />
+            <button
+              className={`icon-button live-toggle ${liveMode ? "active" : ""}`}
+              onClick={() => app().setLiveMode((v) => !v)}
+              title={liveMode ? "Disable live tail" : "Enable live tail"}
+              disabled={!file}
+            >
+              <span className={`live-dot ${liveMode ? "on" : ""}`} />
+              Live
+            </button>
+          </header>
+
+          {error ? (
+            <div className="error-banner" role="alert">
+              <span>{error}</span>
+              <button onClick={() => app().setError(null)} aria-label="Dismiss error">
+                <X size={14} />
+              </button>
+            </div>
+          ) : null}
+          {hasDiskChange ? (
+            <div className="warning-banner" role="alert">
+              <span>
+                {hasAppendOnlyChange
+                  ? "Active file has appended records on disk."
+                  : "Active file changed on disk. Rescan to refresh summaries."}
+              </span>
+              {hasAppendOnlyChange ? (
+                <button onClick={() => void ws().handleLoadAppendedRecords()} disabled={loading}>
+                  Load appended records
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {activeTab && (
+            <WorkspaceTabs
+              sessionTabs={activeTab.sessionTabs}
+              activeSessionTabId={activeTab.activeSessionTabId}
+              onActivate={ws().handleSessionTabSwitch}
+              onClose={ws().closeSessionTab}
+              onCloseAll={ws().closeAllSessionTabs}
+              onCloseOthers={ws().closeOtherSessionTabs}
+            />
+          )}
+
+          <section
+            className="workspace"
+            ref={workspaceRef}
+            style={{ gridTemplateColumns: `${leftPanelWidth}px 1px minmax(0, 1fr) 1px ${rightPanelWidth}px` }}
+          >
+            <aside className="list-pane">
+              <LeftPanel
+                tab={leftTab}
+                setTab={(t) => app().setLeftTab(t)}
+                source={activeTab?.source ?? null}
+                sortOrder={leftSortOrder}
+                setSortOrder={(o) => app().setLeftSortOrder(o)}
+                query={query}
+                setQuery={(q) => app().setQuery(q)}
+                file={file}
+                filtered={filtered}
+                selected={selected}
+                selectedAgentEvent={selectedAgentEvent}
+                newLineNumbers={newLineNumbers}
+                agentSession={filteredAgentSession}
+                sessions={sessions}
+                issues={issues}
+                filterOptions={filterOptions}
+                searchTerm={searchTerm}
+                setSearchTerm={(term) => ws().updateActiveSessionTab({ searchTerm: term })}
+                searching={searching}
+                searchResults={searchResults}
+                lastSearchIndexed={lastSearchIndexed}
+                analytics={analytics}
+                detail={detail}
+                costEstimates={costEstimates}
+                onSearch={(mode) => void ws().handleSearch(mode)}
+                onSelect={(s) => void ws().handleSelect(s)}
+                onCompare={(s) => void ws().handleSetCompare(s)}
+                onJump={(r) => void ws().jumpToResult(r, file)}
+                onAgentEventSelect={(e) => void ws().jumpToAgentEvent(e, file)}
+                onTraceFilter={(trace) => ws().updateActiveTab({ traceFilter: trace, issueOnly: false })}
+                onClearSearchResults={() => ws().updateActiveSessionTab({ searchResults: [] })}
+                onOpenSubagentTab={(agentId) => ws().handleSessionTabSwitch(`subagent:${agentId}`)}
+              />
+            </aside>
+
+            <div className="resize-handle" id="resize-handle-left" />
+
+            <section className="conversation-pane">
+              <DetailView
+                detail={detail}
+                selected={selected}
+                agentEvent={selectedAgentEvent}
+                messageViewMode={messageViewMode}
+                onMessageViewModeChange={(m) => app().setMessageViewMode(m)}
+                onImagePreview={(v) => app().setImagePreview(v)}
+              />
+            </section>
+
+            <div className="resize-handle" id="resize-handle-right" />
+
+            <aside className="json-pane">
+              <RightPanel
+                tab={rightTab}
+                setTab={(t) => app().setRightTab(t)}
+                detail={detail}
+                compareBase={compareBase}
+                file={file}
+                agentEvent={selectedAgentEvent}
+                onClearCompare={() => ws().updateActiveSessionTab({ compareBase: null })}
+              />
+            </aside>
+          </section>
+        </>
+      )}
+
+      {activeTab && (
+        <StatusBar
           loading={loading}
           searching={searching}
           scanProgress={scanProgress}
@@ -513,82 +649,26 @@ export function App() {
           onCancelScan={() => void cancelScan()}
           onCancelSearch={() => void cancelSearch()}
         />
-      ) : null}
-
-      {tabs.length > 0 ? (
-        <WorkspaceTabs tabs={tabs} activeTabId={activeTabId} onActivate={ws().handleTabSwitch} onClose={ws().handleCloseTab} />
-      ) : null}
-
-      <section
-        className="workspace"
-        ref={workspaceRef}
-        style={{ gridTemplateColumns: `${leftPanelWidth}px 1px minmax(0, 1fr) 1px ${rightPanelWidth}px` }}
-      >
-        <aside className="list-pane">
-          <LeftPanel
-            tab={leftTab}
-            setTab={(t) => app().setLeftTab(t)}
-            sortOrder={leftSortOrder}
-            setSortOrder={(o) => app().setLeftSortOrder(o)}
-            file={file}
-            filtered={filtered}
-            selected={selected}
-            selectedAgentEvent={selectedAgentEvent}
-            newLineNumbers={newLineNumbers}
-            agentSession={agentSession}
-            sessions={sessions}
-            issues={issues}
-            filterOptions={filterOptions}
-            searchTerm={searchTerm}
-            setSearchTerm={(term) => ws().updateActiveTab({ searchTerm: term })}
-            searching={searching}
-            searchResults={searchResults}
-            lastSearchIndexed={lastSearchIndexed}
-            analytics={analytics}
-            detail={detail}
-            costEstimates={costEstimates}
-            onSearch={() => void ws().handleSearch()}
-            onSelect={(s) => void ws().handleSelect(s)}
-            onCompare={(s) => void ws().handleSetCompare(s)}
-            onJump={(r) => void ws().jumpToResult(r, file)}
-            onAgentEventSelect={(e) => void ws().jumpToAgentEvent(e, file)}
-            onTraceFilter={(trace) => ws().updateActiveTab({ traceFilter: trace, issueOnly: false })}
-          />
-        </aside>
-
-        <div className="resize-handle" id="resize-handle-left" />
-
-        <section className="conversation-pane">
-          <DetailView
-            detail={detail}
-            selected={selected}
-            agentEvent={selectedAgentEvent}
-            messageViewMode={messageViewMode}
-            onMessageViewModeChange={(m) => app().setMessageViewMode(m)}
-            onImagePreview={(v) => app().setImagePreview(v)}
-          />
-        </section>
-
-        <div className="resize-handle" id="resize-handle-right" />
-
-        <aside className="json-pane">
-          <RightPanel
-            tab={rightTab}
-            setTab={(t) => app().setRightTab(t)}
-            detail={detail}
-            compareBase={compareBase}
-            file={file}
-            agentEvent={selectedAgentEvent}
-            onClearCompare={() => ws().updateActiveTab({ compareBase: null })}
-          />
-        </aside>
-      </section>
+      )}
 
       {(!ready || tabSwitching) && (
         <div className={`load-overlay${ready && !tabSwitching ? " fade-out" : ""}`}>
           <div className="spinner" />
         </div>
       )}
+
+      {sourceConfirmDialog ? (
+        <SourceConfirmDialog
+          filePath={sourceConfirmDialog.filePath}
+          detectedSource={sourceConfirmDialog.detectedSource}
+          onConfirm={(source) => {
+            const path = sourceConfirmDialog.filePath;
+            app().setSourceConfirmDialog(null);
+            void ws().loadFile(path, { source });
+          }}
+          onCancel={() => app().setSourceConfirmDialog(null)}
+        />
+      ) : null}
 
       {imagePreview ? (
         <div className="image-modal" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => app().setImagePreview(null)}>

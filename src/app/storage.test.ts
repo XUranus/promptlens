@@ -48,10 +48,6 @@ describe("leftTabLabel", () => {
     expect(leftTabLabel("issues")).toBe("Issues");
   });
 
-  it("returns 'Search' for search", () => {
-    expect(leftTabLabel("search")).toBe("Search");
-  });
-
   it("returns 'Agent Files' for agentFiles", () => {
     expect(leftTabLabel("agentFiles")).toBe("Agent Files");
   });

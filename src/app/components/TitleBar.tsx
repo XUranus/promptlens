@@ -4,11 +4,12 @@ import { Database, FileDown, FileText, FolderOpen, Moon, RotateCw, Sun } from "l
 import { basename } from "../../lib/format";
 import type { LogSource } from "../../types";
 import type { AnalyticsSummary, AppSettings, IssueRecord } from "../types";
-import { DEFAULT_SETTINGS, LOG_SOURCE_OPTIONS } from "../types";
+import { DEFAULT_SETTINGS, LOG_SOURCE_OPTIONS, sourceBrandLabel } from "../types";
 
 const appWindow = getCurrentWindow();
 
 export function TitleBar({
+  source,
   theme,
   settings,
   settingsOpen,
@@ -31,6 +32,7 @@ export function TitleBar({
   onExport,
   onRawExport,
 }: {
+  source: LogSource | null;
   theme: "dark" | "light";
   settings: AppSettings;
   settingsOpen: boolean;
@@ -67,6 +69,19 @@ export function TitleBar({
   useEffect(() => {
     setOpenMenu(settingsOpen ? "settings" : null);
   }, [settingsOpen]);
+
+  useEffect(() => {
+    if (!openMenu) return;
+    function handleOutsideClick(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      if (!target.closest(".app-menu-left")) {
+        setOpenMenu(null);
+        if (settingsOpen) onToggleSettings();
+      }
+    }
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [openMenu, settingsOpen, onToggleSettings]);
 
   function startDrag(e: React.MouseEvent) {
     if (e.button !== 0) return;
@@ -114,7 +129,7 @@ export function TitleBar({
               </linearGradient>
             </defs>
           </svg>
-          <span>PromptLens</span>
+          <span>{sourceBrandLabel(source)}</span>
         </div>
         <div className="app-menu">
           <button className={openMenu === "open" ? "active" : ""} onClick={() => toggleMenu("open")}>Open</button>

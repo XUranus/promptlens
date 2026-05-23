@@ -16,6 +16,77 @@
 }
 
 /* ============================================================
+   Status Bar (footer)
+   ============================================================ */
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 24px;
+  padding: 0 10px;
+  border-top: 1px solid var(--glass-border);
+  background: var(--glass-bg-subtle);
+  color: var(--text-tertiary);
+  font-size: 11px;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.status-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-info {
+  color: var(--text-tertiary);
+}
+
+.status-progress-track {
+  width: 80px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--glass-border-strong);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.status-progress-track div {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 300ms var(--ease);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+.status-progress-label {
+  color: var(--text-secondary);
+}
+
+.status-bar button {
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--text-secondary);
+  background: var(--glass-bg);
+  cursor: pointer;
+  font-size: 10px;
+  transition: all 150ms var(--ease);
+}
+
+.status-bar button:hover {
+  color: var(--text-primary);
+  background: var(--glass-bg-hover);
+}
+
+/* ============================================================
    Workspace Layout (3-pane)
    ============================================================ */
 
@@ -92,7 +163,7 @@ body.resizing * {
 
 .left-tabs {
   display: grid;
-  grid-template-columns: repeat(9, minmax(28px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(28px, 1fr));
   border-bottom: 1px solid var(--glass-border);
   background: var(--glass-bg-subtle);
 }
@@ -147,10 +218,162 @@ body.resizing * {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  position: relative;
 }
 
 .left-tab-body .log-list {
   height: 100%;
+}
+
+.records-tab-content {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  inset: 0;
+}
+
+.records-tab-content .log-list {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.records-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.records-search svg {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.records-search input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.records-search input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.records-search-mode {
+  border: 1px solid var(--glass-border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  background: var(--glass-bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.records-search-btn {
+  border: 1px solid var(--glass-border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  background: var(--glass-bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 150ms var(--ease);
+}
+
+.records-search-btn:hover:not(:disabled) {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.records-search-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.records-search-results {
+  border-bottom: 1px solid var(--glass-border);
+  max-height: 200px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.search-results-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: var(--glass-bg-subtle);
+  border-bottom: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+
+.search-results-header .search-indexed {
+  margin-left: auto;
+  opacity: 0.7;
+}
+
+.search-results-clear {
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.search-results-clear:hover {
+  color: var(--text-primary);
+}
+
+.search-results-list {
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.search-results-list button {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.search-results-list button:hover {
+  background: var(--glass-bg-hover);
+}
+
+.search-results-list button.active {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.search-results-list button strong {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+}
+
+.search-results-list button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Content pane — more opaque for readability */

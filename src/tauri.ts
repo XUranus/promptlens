@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AgentSessionIncrementalResult,
   AgentSessionResult,
   CacheInfo,
   ComputedAnalytics,
@@ -66,8 +67,21 @@ export async function readRecord(
   return invoke("read_record", { filePath, byteOffset, lineNumber });
 }
 
+export async function detectLogSource(filePath: string): Promise<LogSource | null> {
+  return invoke("detect_log_source", { filePath });
+}
+
 export async function readAgentSession(filePath: string, logSource: LogSource = "audit"): Promise<AgentSessionResult> {
   return invoke("read_agent_session", { filePath, logSource });
+}
+
+export async function readAgentSessionIncremental(
+  filePath: string,
+  fromOffset: number,
+  fromLineNumber: number,
+  logSource: LogSource = "audit",
+): Promise<AgentSessionIncrementalResult> {
+  return invoke("read_agent_session_incremental", { filePath, fromOffset, fromLineNumber, logSource });
 }
 
 export async function searchJsonl(filePath: string, query: string, mode: string = "substring"): Promise<SearchResponse> {

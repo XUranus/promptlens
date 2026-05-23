@@ -20,8 +20,7 @@ export type LeftTab =
   | "trace"
   | "sessions"
   | "analytics"
-  | "issues"
-  | "search";
+  | "issues";
 export type RightTab =
   | "diff"
   | "tools"
@@ -83,22 +82,33 @@ export type AppSettings = {
   codeFontFamily: string;
 };
 
-export type WorkspaceTab = {
+export type SessionTabKind = "main" | "subagent";
+
+export type SessionTab = {
   id: string;
-  source: LogSource;
-  file: FileScanResult;
+  kind: SessionTabKind;
+  label: string;
+  agentId?: string;
   selected: LogSummary | null;
   detail: RecordDetail | null;
   compareBase: RecordDetail | null;
   searchTerm: string;
   searchResults: SearchResult[];
+};
+
+export type WorkspaceTab = {
+  id: string;
+  source: LogSource;
+  file: FileScanResult;
+  agentSession: AgentSessionResult | null;
+  sessionTabs: SessionTab[];
+  activeSessionTabId: string;
   providerFilter: string;
   modelFilter: string;
   statusFilter: string;
   issueOnly: boolean;
   traceFilter: string;
   lastSearchIndexed: boolean | null;
-  agentSession: AgentSessionResult | null;
   newLineNumbers: number[];
   lastScanMs: number | null;
   lastSearchMs: number | null;
@@ -118,6 +128,30 @@ export const LOG_SOURCE_OPTIONS: Array<{ value: LogSource; label: string }> = [
   { value: "claude_code", label: "Claude Code" },
   { value: "generic_agent", label: "Agent JSONL" },
 ];
+
+export function sourceBrandLabel(source: LogSource | null): string {
+  switch (source) {
+    case "claude_code": return "Claude Code";
+    case "codex": return "Codex";
+    case "opencode": return "OpenCode";
+    case "openclaw": return "OpenClaw";
+    case "generic_agent": return "Agent Session";
+    default: return "PromptLens";
+  }
+}
+
+export function createMainSessionTab(): SessionTab {
+  return {
+    id: "main",
+    kind: "main",
+    label: "Main",
+    selected: null,
+    detail: null,
+    compareBase: null,
+    searchTerm: "",
+    searchResults: [],
+  };
+}
 
 export const DEFAULT_SETTINGS: AppSettings = {
   fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',

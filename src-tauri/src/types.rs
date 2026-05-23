@@ -132,6 +132,17 @@ pub(crate) struct AgentSessionResult {
     pub(crate) total_events: usize,
     pub(crate) sessions: Vec<String>,
     pub(crate) events: Vec<AgentEvent>,
+    pub(crate) subagent_sessions: Vec<SubagentSession>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SubagentSession {
+    pub(crate) agent_id: String,
+    pub(crate) agent_type: Option<String>,
+    pub(crate) description: Option<String>,
+    pub(crate) tool_use_id: Option<String>,
+    pub(crate) events: Vec<AgentEvent>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -147,6 +158,7 @@ pub(crate) struct AgentEvent {
     pub(crate) role: Option<String>,
     pub(crate) event_type: String,
     pub(crate) provider: Option<String>,
+    pub(crate) model: Option<String>,
     pub(crate) tool_name: Option<String>,
     pub(crate) tool_use_id: Option<String>,
     pub(crate) subagent_type: Option<String>,
@@ -156,6 +168,12 @@ pub(crate) struct AgentEvent {
     pub(crate) file_paths: Vec<String>,
     pub(crate) status: Option<String>,
     pub(crate) duration_ms: Option<u64>,
+    pub(crate) input_tokens: Option<u64>,
+    pub(crate) output_tokens: Option<u64>,
+    pub(crate) is_error: bool,
+    pub(crate) tool_result_content: Option<Value>,
+    pub(crate) is_sidechain: bool,
+    pub(crate) agent_id: Option<String>,
     pub(crate) preview: Option<String>,
     pub(crate) text: Option<String>,
     pub(crate) raw: Value,
@@ -248,6 +266,23 @@ pub(crate) enum NormalizedContent {
     Unknown {
         raw: Value,
     },
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ScanChunkPayload {
+    pub(crate) file_path: String,
+    pub(crate) summaries: Vec<LogSummary>,
+    pub(crate) line_from: usize,
+    pub(crate) line_to: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentSessionIncrementalResult {
+    pub(crate) events: Vec<AgentEvent>,
+    pub(crate) next_line_number: usize,
+    pub(crate) total_events: usize,
 }
 
 #[derive(Debug, Deserialize)]

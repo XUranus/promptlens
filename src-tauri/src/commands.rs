@@ -297,15 +297,138 @@ pub(crate) fn read_agent_session(
     let mut sessions = sessions.into_iter().collect::<Vec<_>>();
     sessions.sort();
 
+    // Load subagent JSONL files from the session directory
+    let subagent_sessions = load_subagent_sessions(path, source, &subagent_calls);
+
     let result = AgentSessionResult {
         file_path,
         source: source.as_str().to_string(),
         total_events: events.len(),
         sessions,
         events,
+        subagent_sessions,
     };
     let _ = write_agent_session_cache(&result, metadata.len(), modified.as_deref());
     Ok(result)
+}
+
+fn load_subagent_sessions(
+    main_file_path: &Path,
+    source: LogSource,
+    subagent_calls: &HashMap<String, AgentEvent>,
+) -> Vec<SubagentSession> {
+    let session_dir = main_file_path
+        .parent()
+        .map(|p| {
+            let stem = main_file_path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            p.join(stem)
+        })
+        .filter(|d| d.is_dir());
+
+    let Some(session_dir) = session_dir else {
+        return Vec::new();
+    };
+
+    let subagents_dir = session_dir.join("subagents");
+    if !subagents_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let mut sessions = Vec::new();
+    let Ok(entries) = fs::read_dir(&subagents_dir) else {
+        return sessions;
+    };
+
+    // Build a lookup from agent_id to the subagent_call event
+    let mut call_by_agent_id: HashMap<&str, &AgentEvent> = HashMap::new();
+    for call in subagent_calls.values() {
+        if let Some(ref agent_id) = call.agent_id {
+            call_by_agent_id.insert(agent_id.as_str(), call);
+        }
+    }
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.extension().is_some_and(|ext| ext == "jsonl") {
+            continue;
+        }
+
+        let agent_id = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Read meta file if it exists
+        let meta_path = path.with_extension("meta.json");
+        let meta: Option<Value> = fs::read_to_string(&meta_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok());
+
+        let agent_type = meta.as_ref().and_then(|m| {
+            m.get("agentType")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+        let description = meta.as_ref().and_then(|m| {
+            m.get("description")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+        let tool_use_id = meta.as_ref().and_then(|m| {
+            m.get("toolUseId")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+
+        // Read the subagent JSONL
+        let Ok(file) = File::open(&path) else {
+            continue;
+        };
+        let mut reader = BufReader::new(file);
+        let mut line = String::new();
+        let mut sub_events = Vec::new();
+        let mut line_number = 0usize;
+        let mut byte_offset = 0u64;
+
+        loop {
+            line.clear();
+            let bytes = match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(b) => b,
+                Err(_) => break,
+            };
+            line_number += 1;
+            let trimmed = line.trim_end_matches(['\n', '\r']);
+            if trimmed.trim().is_empty() {
+                byte_offset += bytes as u64;
+                continue;
+            }
+            let value = match serde_json::from_str::<Value>(trimmed) {
+                Ok(v) => v,
+                Err(err) => json!({ "parse_error": err.to_string(), "raw": trimmed }),
+            };
+            let mut event = agent_event_from_value(value, line_number, byte_offset, source);
+            event.agent_id = Some(agent_id.clone());
+            sub_events.push(event);
+            byte_offset += bytes as u64;
+        }
+
+        if !sub_events.is_empty() {
+            sessions.push(SubagentSession {
+                agent_id,
+                agent_type,
+                description,
+                tool_use_id,
+                events: sub_events,
+            });
+        }
+    }
+
+    sessions.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
+    sessions
 }
 
 #[tauri::command]
@@ -315,6 +438,113 @@ fn scan_jsonl_incremental(
     from_line_number: usize,
 ) -> Result<IncrementalScanResult, String> {
     scan_jsonl_incremental_impl(file_path, from_offset, from_line_number)
+}
+
+#[tauri::command]
+fn detect_log_source(file_path: String) -> Option<String> {
+    use crate::agent::detect_source_from_value;
+    let file = match File::open(&file_path) {
+        Ok(f) => f,
+        Err(_) => return None,
+    };
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    let mut votes: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for _ in 0..20 {
+        line.clear();
+        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            if let Some(source) = detect_source_from_value(&value) {
+                *votes.entry(source.as_str().to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+    votes
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(source, _)| source)
+}
+
+#[tauri::command]
+fn read_agent_session_incremental(
+    file_path: String,
+    from_offset: u64,
+    from_line_number: usize,
+    log_source: Option<String>,
+) -> Result<AgentSessionIncrementalResult, String> {
+    let source = LogSource::from_option(log_source);
+    let file = File::open(&file_path).map_err(|err| format!("Failed to open file: {err}"))?;
+    let mut reader = BufReader::new(file);
+    reader
+        .seek(SeekFrom::Start(from_offset))
+        .map_err(|err| format!("Failed to seek offset: {err}"))?;
+
+    let mut line = String::new();
+    let mut byte_offset = from_offset;
+    let mut line_number = from_line_number;
+    let mut events = Vec::new();
+    let mut subagent_calls: HashMap<String, AgentEvent> = HashMap::new();
+
+    loop {
+        line.clear();
+        let bytes = reader
+            .read_line(&mut line)
+            .map_err(|err| format!("Failed to read line: {err}"))?;
+        if bytes == 0 {
+            break;
+        }
+        line_number += 1;
+        let trimmed = line.trim_end_matches(['\n', '\r']);
+        if trimmed.trim().is_empty() {
+            byte_offset += bytes as u64;
+            continue;
+        }
+        let value = match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => value,
+            Err(err) => json!({
+                "parse_error": err.to_string(),
+                "raw": trimmed,
+            }),
+        };
+        let mut event = agent_event_from_value(value, line_number, byte_offset, source);
+        if event.event_type == "tool_result" {
+            if let Some(call) = event
+                .tool_use_id
+                .as_ref()
+                .and_then(|tool_use_id| subagent_calls.get(tool_use_id))
+            {
+                event.event_type = "subagent_result".to_string();
+                event.tool_name = event.tool_name.or_else(|| call.tool_name.clone());
+                event.subagent_type = event.subagent_type.or_else(|| call.subagent_type.clone());
+                event.subagent_description = event
+                    .subagent_description
+                    .or_else(|| call.subagent_description.clone());
+                event.subagent_prompt = event
+                    .subagent_prompt
+                    .or_else(|| call.subagent_prompt.clone());
+            }
+        }
+        if event.event_type == "subagent_call" {
+            if let Some(tool_use_id) = &event.tool_use_id {
+                subagent_calls.insert(tool_use_id.clone(), event.clone());
+            }
+        }
+        events.push(event);
+        byte_offset += bytes as u64;
+    }
+
+    let total = events.len();
+    Ok(AgentSessionIncrementalResult {
+        events,
+        next_line_number: line_number,
+        total_events: total,
+    })
 }
 
 #[tauri::command]
@@ -398,6 +628,8 @@ pub fn run() {
             export_records,
             read_record,
             read_agent_session,
+            read_agent_session_incremental,
+            detect_log_source,
             search_jsonl,
             cancel_search,
             list_system_fonts,

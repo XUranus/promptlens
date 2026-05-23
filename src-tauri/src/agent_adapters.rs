@@ -18,6 +18,7 @@ pub(crate) struct AgentEventAdapterFields {
     pub(crate) subagent_type: Option<String>,
     pub(crate) subagent_description: Option<String>,
     pub(crate) subagent_prompt: Option<String>,
+    pub(crate) is_error: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,8 +182,30 @@ fn adapt_claude_code_event(value: &Value) -> AgentEventAdapterFields {
         fields.status = first_string(value, &["subtype", "level"]);
         return fields;
     }
+    if lowered_type == "permission-mode" {
+        fields.event_type = Some("checkpoint".to_string());
+        fields.status = first_string(value, &["permissionMode"]);
+        return fields;
+    }
+    if lowered_type == "last-prompt" {
+        fields.event_type = Some("checkpoint".to_string());
+        fields.text = first_string(value, &["lastPrompt"]);
+        return fields;
+    }
+    if lowered_type == "ai-title" {
+        fields.event_type = Some("checkpoint".to_string());
+        fields.text = first_string(value, &["title"]);
+        return fields;
+    }
+    if lowered_type == "agent-name" {
+        fields.event_type = Some("checkpoint".to_string());
+        fields.text = first_string(value, &["name", "agentName"]);
+        return fields;
+    }
     fields.role = agent_role(value);
-    fields.text = agent_text(value);
+    // Track the most significant event type across all content parts
+    // Priority: tool_use > tool_result > thinking > text
+    let mut best_event_type: Option<String> = None;
     if let Some(message) = value.get("message") {
         if let Some(content) = message.get("content").and_then(Value::as_array) {
             for part in content {
@@ -197,46 +220,81 @@ fn adapt_claude_code_event(value: &Value) -> AgentEventAdapterFields {
                     if let Some(input) = part.get("input") {
                         fields.command = first_string(input, &["command", "cmd"]);
                         fields.file_paths = agent_file_paths(input);
-                        if fields.tool_name.as_deref() == Some("Task") {
+                        if matches!(fields.tool_name.as_deref(), Some("Task") | Some("Agent")) {
                             fields.subagent_type =
                                 first_string(input, &["subagent_type", "subagentType"]);
                             fields.subagent_description = first_string(input, &["description"]);
                             fields.subagent_prompt = first_string(input, &["prompt"]);
-                            fields.text = fields
-                                .subagent_description
-                                .clone()
-                                .or_else(|| fields.subagent_prompt.clone());
+                            if fields.text.is_none() {
+                                fields.text = fields
+                                    .subagent_description
+                                    .clone()
+                                    .or_else(|| fields.subagent_prompt.clone());
+                            }
                         }
                     }
-                    fields.event_type = match fields.tool_name.as_deref() {
-                        Some("Task") => Some("subagent_call".to_string()),
+                    best_event_type = Some(match fields.tool_name.as_deref() {
+                        Some("Task" | "Agent") => "subagent_call".to_string(),
                         Some(tool) if is_shell_tool(tool) || fields.command.is_some() => {
-                            Some("shell_command".to_string())
+                            "shell_command".to_string()
                         }
                         Some(tool) if is_file_tool(tool) || !fields.file_paths.is_empty() => {
                             file_event_type_from_tool(Some(tool))
+                                .unwrap_or_else(|| "file_edit".to_string())
                         }
-                        _ => Some("tool_call".to_string()),
-                    };
-                    break;
-                }
-                if part_type == "tool_result" {
-                    fields.event_type = Some("tool_result".to_string());
+                        _ => "tool_call".to_string(),
+                    });
+                } else if part_type == "tool_result" {
                     fields.tool_use_id = first_string(part, &["tool_use_id", "toolUseId"]);
-                    fields.text = agent_text_from_content(part);
-                    break;
-                }
-                if part_type == "thinking" {
-                    fields.event_type = Some("reasoning".to_string());
-                    fields.text = part
+                    if part
+                        .get("is_error")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        fields.is_error = true;
+                    }
+                    let result_text = agent_text_from_content(part);
+                    if let Some(rt) = result_text {
+                        match &mut fields.text {
+                            Some(existing) => {
+                                existing.push_str("\n");
+                                existing.push_str(&rt);
+                            }
+                            None => fields.text = Some(rt),
+                        }
+                    }
+                    // Only set to tool_result if nothing higher priority was found
+                    if best_event_type.is_none() {
+                        best_event_type = Some("tool_result".to_string());
+                    }
+                } else if part_type == "thinking" {
+                    let thinking_text = part
                         .get("thinking")
                         .and_then(Value::as_str)
                         .map(str::to_string)
                         .or_else(|| agent_text_from_content(part));
-                    break;
+                    if let Some(tt) = thinking_text {
+                        match &mut fields.text {
+                            Some(existing) => {
+                                existing.push_str("\n\n");
+                                existing.push_str(&tt);
+                            }
+                            None => fields.text = Some(tt),
+                        }
+                    }
+                    if best_event_type.is_none() {
+                        best_event_type = Some("reasoning".to_string());
+                    }
                 }
             }
         }
+    }
+    if fields.event_type.is_none() {
+        fields.event_type = best_event_type;
+    }
+    // Fallback: if no text was extracted from content parts, try agent_text
+    if fields.text.is_none() {
+        fields.text = agent_text(value);
     }
     fields
 }

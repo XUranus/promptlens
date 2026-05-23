@@ -122,6 +122,30 @@
   font-size: 11px;
 }
 
+.sidechain-tag,
+.agent-id-tag {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.sidechain-tag {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning-border);
+}
+
+.agent-id-tag {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border: 1px solid var(--glass-border-accent);
+  font-family: var(--code-font-family);
+  font-size: 9px;
+}
+
 .agent-command {
   display: block;
   border: 1px solid var(--glass-border);
@@ -227,4 +251,75 @@
 .patch-preview {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.tool-result-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tool-result-detail .kv-row {
+  margin: 0;
+}
+
+.subagent-card-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.subagent-card-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.subagent-conversation {
+  border: 1px solid var(--glass-border);
+  border-top: none;
+  border-radius: 0 0 10px 10px;
+  background: var(--glass-bg-subtle);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.subagent-event-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.subagent-event-row:last-child {
+  border-bottom: none;
+}
+
+.subagent-event-row:hover {
+  background: var(--glass-bg-hover);
+}
+
+.subagent-event-row.active {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+}
+
+.subagent-event-row .event-type {
+  flex-shrink: 0;
+  font-weight: 600;
+  min-width: 80px;
+}
+
+.subagent-event-preview {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

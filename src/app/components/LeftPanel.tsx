@@ -51,8 +51,11 @@ import { leftTabLabel } from "../storage";
 export function LeftPanel({
   tab,
   setTab,
+  source,
   sortOrder,
   setSortOrder,
+  query,
+  setQuery,
   file,
   filtered,
   selected,
@@ -76,11 +79,16 @@ export function LeftPanel({
   onJump,
   onAgentEventSelect,
   onTraceFilter,
+  onClearSearchResults,
+  onOpenSubagentTab,
 }: {
   tab: LeftTab;
   setTab: (tab: LeftTab) => void;
+  source: import("../../types").LogSource | null;
   sortOrder: SortOrder;
   setSortOrder: (order: SortOrder) => void;
+  query: string;
+  setQuery: (query: string) => void;
   file: FileScanResult | null;
   filtered: import("../../types").LogSummary[];
   selected: import("../../types").LogSummary | null;
@@ -104,6 +112,8 @@ export function LeftPanel({
   onJump: (result: SearchResult) => void;
   onAgentEventSelect: (event: AgentEvent) => void;
   onTraceFilter: (trace: string) => void;
+  onClearSearchResults: () => void;
+  onOpenSubagentTab: (agentId: string) => void;
 }) {
   const records = useMemo(() => orderSummaries(filtered, sortOrder), [filtered, sortOrder]);
   const orderedEvents = useMemo(
@@ -121,6 +131,8 @@ export function LeftPanel({
     return aligned;
   }, [filtered, costEstimates]);
   const totalCost = useMemo(() => costEstimates.reduce((sum, c) => sum + c.total_cost, 0), [costEstimates]);
+  const [searchMode, setSearchMode] = useState<"substring" | "regex" | "fts">("substring");
+  const isAgentSession = source !== null && source !== "audit";
 
   return (
     <div className="left-panel">
@@ -129,29 +141,36 @@ export function LeftPanel({
         <button role="tab" aria-selected={tab === "records"} className={tab === "records" ? "active" : ""} onClick={() => setTab("records")} title="Records">
           <FileText size={14} />
         </button>
-        <button role="tab" aria-selected={tab === "timeline"} className={tab === "timeline" ? "active" : ""} onClick={() => setTab("timeline")} title="Agent Timeline">
-          <Terminal size={14} />
-        </button>
-        <button role="tab" aria-selected={tab === "subagents"} className={tab === "subagents" ? "active" : ""} onClick={() => setTab("subagents")} title="Subagents">
-          <Bot size={14} />
-        </button>
-        <button role="tab" aria-selected={tab === "agentFiles"} className={tab === "agentFiles" ? "active" : ""} onClick={() => setTab("agentFiles")} title="Agent Files">
-          <FileText size={14} />
-        </button>
-        <button role="tab" aria-selected={tab === "trace"} className={tab === "trace" ? "active" : ""} onClick={() => setTab("trace")} title="Trace">
-          <Network size={14} />
-        </button>
-        <button role="tab" aria-selected={tab === "sessions"} className={tab === "sessions" ? "active" : ""} onClick={() => setTab("sessions")} title="Sessions">
-          <Users size={14} />
-        </button>
+        {isAgentSession && (
+          <button role="tab" aria-selected={tab === "timeline"} className={tab === "timeline" ? "active" : ""} onClick={() => setTab("timeline")} title="Agent Timeline">
+            <Terminal size={14} />
+          </button>
+        )}
+        {isAgentSession && (
+          <button role="tab" aria-selected={tab === "subagents"} className={tab === "subagents" ? "active" : ""} onClick={() => setTab("subagents")} title="Subagents">
+            <Bot size={14} />
+          </button>
+        )}
+        {isAgentSession && (
+          <button role="tab" aria-selected={tab === "agentFiles"} className={tab === "agentFiles" ? "active" : ""} onClick={() => setTab("agentFiles")} title="Agent Files">
+            <FileText size={14} />
+          </button>
+        )}
+        {!isAgentSession && (
+          <button role="tab" aria-selected={tab === "trace"} className={tab === "trace" ? "active" : ""} onClick={() => setTab("trace")} title="Trace">
+            <Network size={14} />
+          </button>
+        )}
+        {!isAgentSession && (
+          <button role="tab" aria-selected={tab === "sessions"} className={tab === "sessions" ? "active" : ""} onClick={() => setTab("sessions")} title="Sessions">
+            <Users size={14} />
+          </button>
+        )}
         <button role="tab" aria-selected={tab === "analytics"} className={tab === "analytics" ? "active" : ""} onClick={() => setTab("analytics")} title="Analytics">
           <BarChart3 size={14} />
         </button>
         <button role="tab" aria-selected={tab === "issues"} className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")} title="Issues">
           <AlertTriangle size={14} />
-        </button>
-        <button role="tab" aria-selected={tab === "search"} className={tab === "search" ? "active" : ""} onClick={() => setTab("search")} title="Search">
-          <Search size={14} />
         </button>
       </div>
       <div className="left-controls">
@@ -163,7 +182,60 @@ export function LeftPanel({
       <div className="left-tab-body">
         {tab === "records" ? (
           file ? (
-            <LogList items={records} selected={selected} newLineNumbers={newLineNumbers} costMap={costMap} onSelect={onSelect} onCompare={onCompare} />
+            <div className="records-tab-content">
+              <div className="records-search">
+                <Search size={13} />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      setSearchTerm(query);
+                      onSearch(searchMode);
+                    }
+                  }}
+                  placeholder="Filter or search records"
+                />
+                <select
+                  value={searchMode}
+                  onChange={(e) => setSearchMode(e.target.value as "substring" | "regex" | "fts")}
+                  className="records-search-mode"
+                >
+                  <option value="substring">Text</option>
+                  <option value="regex">Regex</option>
+                  <option value="fts">FTS</option>
+                </select>
+                <button
+                  className="records-search-btn"
+                  onClick={() => { setSearchTerm(query); onSearch(searchMode); }}
+                  disabled={searching}
+                >
+                  {searching ? "..." : "Search"}
+                </button>
+              </div>
+              {searchResults.length > 0 ? (
+                <div className="records-search-results">
+                  <div className="search-results-header">
+                    <span>{searchResults.length.toLocaleString()} matches</span>
+                    {lastSearchIndexed !== null ? <span className="search-indexed">{lastSearchIndexed ? "Indexed" : "Streaming"}</span> : null}
+                    <button className="search-results-clear" onClick={onClearSearchResults}>×</button>
+                  </div>
+                  <div className="search-results-list">
+                    {searchResults.slice(0, 300).map((result) => (
+                      <button
+                        key={`${result.lineNumber}-${result.byteOffset}`}
+                        className={isSameResult(result, selected) ? "active" : ""}
+                        onClick={() => onJump(result)}
+                      >
+                        <strong>Line {result.lineNumber}</strong>
+                        <span>{result.context}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              <LogList items={records} selected={selected} newLineNumbers={newLineNumbers} costMap={costMap} onSelect={onSelect} onCompare={onCompare} />
+            </div>
           ) : (
             <div className="empty-state">Open a JSONL audit log to inspect LLM calls locally.</div>
           )
@@ -172,7 +244,7 @@ export function LeftPanel({
           <AgentTimelineView session={orderedEvents} selected={selectedAgentEvent} onAgentEventSelect={onAgentEventSelect} />
         ) : null}
         {tab === "subagents" ? (
-          <SubagentsView session={orderedEvents} selected={selectedAgentEvent} onAgentEventSelect={onAgentEventSelect} />
+          <SubagentsView session={orderedEvents} selected={selectedAgentEvent} onAgentEventSelect={onAgentEventSelect} onOpenSubagentTab={onOpenSubagentTab} />
         ) : null}
         {tab === "agentFiles" ? (
           <AgentFilesView session={orderedEvents} selected={selectedAgentEvent} sortOrder={sortOrder} onAgentEventSelect={onAgentEventSelect} />
@@ -185,18 +257,6 @@ export function LeftPanel({
           <AnalyticsView analytics={analytics} filtered={records} file={file} detail={detail} agentEvent={selectedAgentEvent} totalCost={totalCost} />
         ) : null}
         {tab === "issues" ? <IssuesView issues={orderedIssues} selected={selected} onJump={onJump} /> : null}
-        {tab === "search" ? (
-          <SearchPanel
-            term={searchTerm}
-            setTerm={setSearchTerm}
-            searching={searching}
-            results={orderedSearchResults}
-            indexed={lastSearchIndexed}
-            selected={selected}
-            onSearch={onSearch}
-            onJump={onJump}
-          />
-        ) : null}
       </div>
     </div>
   );
@@ -567,8 +627,12 @@ function AgentTimelineView({
                 <div className="agent-event-meta">
                   {event.provider ? <span>{event.provider}</span> : null}
                   {event.role ? <span>{event.role}</span> : null}
+                  {event.isSidechain ? <span className="sidechain-tag">sidechain</span> : null}
+                  {event.agentId ? <span className="agent-id-tag">{event.agentId}</span> : null}
                   {event.sessionId ? <span>{event.sessionId}</span> : null}
                   {event.durationMs ? <span>{formatLatency(event.durationMs)}</span> : null}
+                  {event.inputTokens ? <span>{formatTokens(event.inputTokens)} in</span> : null}
+                  {event.outputTokens ? <span>{formatTokens(event.outputTokens)} out</span> : null}
                 </div>
                 {event.command ? <code className="agent-command">{event.command}</code> : null}
                 {event.filePaths.length ? (
@@ -603,14 +667,27 @@ function SubagentsView({
   session,
   selected,
   onAgentEventSelect,
+  onOpenSubagentTab,
 }: {
   session: AgentSessionResult | null;
   selected: AgentEvent | null;
   onAgentEventSelect: (event: AgentEvent) => void;
+  onOpenSubagentTab: (agentId: string) => void;
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const [subagentQuery, setSubagentQuery] = useState("");
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const allTasks = useMemo(() => session ? buildSubagentTasks(session.events) : [], [session]);
+  const subagentSessionMap = useMemo(() => {
+    const map = new Map<string, typeof session extends { subagentSessions: (infer S)[] } | null ? S : never>();
+    if (session?.subagentSessions) {
+      for (const s of session.subagentSessions) {
+        if (s.toolUseId) map.set(s.toolUseId, s);
+        map.set(s.agentId, s);
+      }
+    }
+    return map;
+  }, [session]);
   const query = subagentQuery.trim().toLowerCase();
   const tasks = allTasks.filter((task) => {
     if (!query) return true;
@@ -659,38 +736,76 @@ function SubagentsView({
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
             const task = tasks[virtualRow.index];
             const active = isSameAgentEvent(task.call, selected) || (task.result ? isSameAgentEvent(task.result, selected) : false);
+            const subSession = task.call.toolUseId ? subagentSessionMap.get(task.call.toolUseId) : null;
+            const isExpanded = expandedId === task.id;
             return (
-              <button
+              <div
                 key={task.id}
                 ref={rowVirtualizer.measureElement}
                 data-index={virtualRow.index}
-                className={`virtual-row subagent-card ${task.status}${active ? " active" : ""}`}
-                onClick={() => onAgentEventSelect(task.call)}
+                className={`virtual-row subagent-card-wrapper`}
                 style={{ transform: `translateY(${virtualRow.start}px)` }}
               >
-                <div className="subagent-card-top">
-                  <span className="event-type">{task.type}</span>
-                  <span>{task.status}</span>
-                </div>
-                <strong>{task.description}</strong>
-                {task.prompt ? <p>{task.prompt}</p> : null}
-                <div className="agent-event-meta">
-                  <span>start line {task.call.lineNumber}</span>
-                  {task.result ? <span>result line {task.result.lineNumber}</span> : null}
-                  {task.call.toolUseId ? <span>{task.call.toolUseId}</span> : null}
-                </div>
-                {task.result ? (
-                  <span
-                    className="subagent-result-link"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onAgentEventSelect(task.result!);
-                    }}
-                  >
-                    Open result
-                  </span>
+                <button
+                  className={`subagent-card ${task.status}${active ? " active" : ""}`}
+                  onClick={() => onAgentEventSelect(task.call)}
+                  onDoubleClick={() => {
+                    const subSession = task.call.toolUseId ? subagentSessionMap.get(task.call.toolUseId) : null;
+                    if (subSession) onOpenSubagentTab(subSession.agentId);
+                  }}
+                >
+                  <div className="subagent-card-top">
+                    <span className="event-type">{task.type}</span>
+                    <span>{task.status}</span>
+                  </div>
+                  <strong>{task.description}</strong>
+                  {task.prompt ? <p>{task.prompt}</p> : null}
+                  <div className="agent-event-meta">
+                    <span>start line {task.call.lineNumber}</span>
+                    {task.result ? <span>result line {task.result.lineNumber}</span> : null}
+                    {task.call.toolUseId ? <span>{task.call.toolUseId}</span> : null}
+                    {subSession ? <span>{subSession.events.length} events</span> : null}
+                  </div>
+                  <div className="subagent-card-actions">
+                    {task.result ? (
+                      <span
+                        className="subagent-result-link"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onAgentEventSelect(task.result!);
+                        }}
+                      >
+                        Open result
+                      </span>
+                    ) : null}
+                    {subSession ? (
+                      <span
+                        className="subagent-result-link"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setExpandedId(isExpanded ? null : task.id);
+                        }}
+                      >
+                        {isExpanded ? "Hide conversation" : "Show conversation"}
+                      </span>
+                    ) : null}
+                  </div>
+                </button>
+                {isExpanded && subSession ? (
+                  <div className="subagent-conversation">
+                    {subSession.events.map((evt, idx) => (
+                      <button
+                        key={`${evt.lineNumber}-${idx}`}
+                        className={`subagent-event-row ${evt.eventType}${isSameAgentEvent(evt, selected) ? " active" : ""}`}
+                        onClick={() => onAgentEventSelect(evt)}
+                      >
+                        <span className="event-type">{agentEventLabel(evt)}</span>
+                        <span className="subagent-event-preview">{evt.preview || evt.command || evt.toolName || evt.text || ""}</span>
+                      </button>
+                    ))}
+                  </div>
                 ) : null}
-              </button>
+              </div>
             );
           })}
         </div>

@@ -403,6 +403,80 @@ mod tests {
     }
 
     #[test]
+    fn claude_code_adapter_links_agent_subagent_call_and_result() {
+        let mut file = NamedTempFile::new().expect("temp file");
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "type": "assistant",
+                "sessionId": "claude-1",
+                "message": {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": "call_abc123",
+                        "name": "Agent",
+                        "input": {
+                            "subagent_type": "general-purpose",
+                            "description": "Split CSS into modules",
+                            "prompt": "Refactor the CSS file."
+                        }
+                    }]
+                }
+            })
+        )
+        .unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({
+                "type": "user",
+                "sessionId": "claude-1",
+                "message": {
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": "call_abc123",
+                        "content": "CSS has been split into 5 modules."
+                    }]
+                }
+            })
+        )
+        .unwrap();
+
+        let result = commands::read_agent_session(
+            file.path().to_string_lossy().to_string(),
+            Some("claude_code".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(result.events[0].event_type, "subagent_call");
+        assert_eq!(result.events[0].tool_use_id.as_deref(), Some("call_abc123"));
+        assert_eq!(
+            result.events[0].subagent_type.as_deref(),
+            Some("general-purpose")
+        );
+        assert_eq!(
+            result.events[0].subagent_description.as_deref(),
+            Some("Split CSS into modules")
+        );
+        assert_eq!(result.events[1].event_type, "subagent_result");
+        assert_eq!(
+            result.events[1].subagent_type.as_deref(),
+            Some("general-purpose")
+        );
+        assert_eq!(
+            result.events[1].subagent_description.as_deref(),
+            Some("Split CSS into modules")
+        );
+        assert_eq!(
+            result.events[1].text.as_deref(),
+            Some("CSS has been split into 5 modules.")
+        );
+    }
+
+    #[test]
     fn opencode_adapter_classifies_file_and_checkpoint_parts() {
         let mut file = NamedTempFile::new().expect("temp file");
         writeln!(

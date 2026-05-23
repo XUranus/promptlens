@@ -45,18 +45,18 @@ export function RightPanel({
         <button className={tab === "error" ? "active" : ""} onClick={() => setTab("error")} title="Error">
           <AlertCircle size={14} />
         </button>
-        <button className={tab === "raw" ? "active" : ""} onClick={() => setTab("raw")} title="Raw">
-          <Code size={14} />
-        </button>
         <button className={tab === "json" ? "active" : ""} onClick={() => setTab("json")} title="JSON">
           <Braces size={14} />
+        </button>
+        <button className={tab === "raw" ? "active" : ""} onClick={() => setTab("raw")} title="Raw">
+          <Code size={14} />
         </button>
       </div>
       {tab === "diff" ? <DiffView base={compareBase} target={detail} onClear={onClearCompare} /> : null}
       {tab === "tools" ? <ToolCallsView detail={detail} agentEvent={agentEvent} /> : null}
       {tab === "error" ? <ErrorView detail={detail} agentEvent={agentEvent} /> : null}
-      {tab === "raw" ? <RawPayloadView detail={detail} agentEvent={agentEvent} /> : null}
       {tab === "json" ? <JsonTreeView detail={detail} agentEvent={agentEvent} /> : null}
+      {tab === "raw" ? <RawPayloadView detail={detail} agentEvent={agentEvent} /> : null}
     </div>
   );
 }
@@ -234,8 +234,10 @@ function RawPayloadView({ detail, agentEvent }: { detail: RecordDetail | null; a
             Copy event text
           </button>
         </div>
-        <h3>Agent Event</h3>
-        <JsonCode value={agentEvent.raw} />
+        <details>
+          <summary>Agent Event</summary>
+          <JsonCode value={agentEvent.raw} />
+        </details>
       </div>
     );
   }
@@ -259,10 +261,14 @@ function RawPayloadView({ detail, agentEvent }: { detail: RecordDetail | null; a
           Copy assistant text
         </button>
       </div>
-      <h3>Raw Request</h3>
-      <JsonCode value={request ?? "No request payload found."} />
-      <h3>Raw Response</h3>
-      <JsonCode value={response ?? "No response payload found."} />
+      <details>
+        <summary>Raw Request</summary>
+        <JsonCode value={request ?? "No request payload found."} />
+      </details>
+      <details>
+        <summary>Raw Response</summary>
+        <JsonCode value={response ?? "No response payload found."} />
+      </details>
     </div>
   );
 }
