@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { Copy } from "lucide-react";
+import { CheckCircle, XCircle, AlertTriangle, HelpCircle, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { copyJson, copyText, safeJson } from "../../lib/clipboard";
@@ -42,7 +42,9 @@ export function DetailView({
             {formatLatency(selected.latencyMs)}
           </p>
         </div>
-        <span className={`pill ${selected.status}`}>{selected.status}</span>
+        <span className={`pill ${selected.status}`} title={selected.status}>
+          <StatusIcon status={selected.status} size={16} />
+        </span>
       </div>
 
       {error ? (
@@ -454,4 +456,17 @@ export function jsonNodeMatches(name: string, value: unknown, query: string): bo
   }
   if (Array.isArray(value)) return value.some((item) => jsonNodeMatches("", item, query));
   return Object.entries(value).some(([key, child]) => jsonNodeMatches(key, child, query));
+}
+
+function StatusIcon({ status, size = 16 }: { status: string; size?: number }) {
+  switch (status) {
+    case "success":
+      return <CheckCircle size={size} className="status-icon status-success" />;
+    case "error":
+      return <XCircle size={size} className="status-icon status-error" />;
+    case "invalid_json":
+      return <AlertTriangle size={size} className="status-icon status-invalid" />;
+    default:
+      return <HelpCircle size={size} className="status-icon status-unknown" />;
+  }
 }

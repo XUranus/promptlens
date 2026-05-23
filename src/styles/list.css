@@ -179,3 +179,19 @@
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
 }
+
+.status-icon {
+  display: block;
+}
+.status-icon.status-success {
+  color: var(--success);
+}
+.status-icon.status-error {
+  color: var(--danger);
+}
+.status-icon.status-invalid {
+  color: var(--warning);
+}
+.status-icon.status-unknown {
+  color: var(--text-tertiary);
+}
