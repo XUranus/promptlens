@@ -1,0 +1,230 @@
+/* ============================================================
+   Agent Timeline
+   ============================================================ */
+
+.agent-event-card,
+.subagent-card,
+.agent-file-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.agent-event-card,
+.subagent-card {
+  border-left-width: 3px;
+}
+
+.agent-event-card.user_message {
+  border-left-color: var(--accent);
+}
+
+.agent-event-card.assistant_message {
+  border-left-color: var(--success);
+}
+
+.agent-event-card.shell_command,
+.agent-event-card.tool_call,
+.agent-event-card.subagent_call,
+.agent-event-card.subagent_result {
+  border-left-color: var(--warning);
+}
+
+.agent-event-card.file_edit,
+.agent-event-card.file_read,
+.agent-event-card.file_write,
+.agent-event-card.patch {
+  border-left-color: var(--accent-hover);
+}
+
+.agent-event-card.error {
+  border-left-color: var(--danger);
+}
+
+.subagent-card.completed {
+  border-left-color: var(--success);
+}
+
+.subagent-card.running {
+  border-left-color: var(--warning);
+}
+
+.subagent-card.error {
+  border-left-color: var(--danger);
+}
+
+.agent-event-top,
+.subagent-card-top,
+.agent-event-meta,
+.agent-file-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.agent-event-top,
+.subagent-card-top {
+  justify-content: space-between;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.agent-event-card strong,
+.subagent-card strong,
+.agent-file-card strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.subagent-card p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.subagent-result-link {
+  align-self: flex-start;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 7px;
+  padding: 3px 8px;
+  color: var(--text-secondary);
+  background: var(--glass-bg-hover);
+  font-size: 11px;
+}
+
+.subagent-result-link:hover {
+  color: var(--text-primary);
+  border-color: var(--glass-border-accent);
+}
+
+.event-type,
+.agent-file-tags span {
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--text-secondary);
+  background: var(--glass-bg-hover);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.agent-event-meta {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.agent-command {
+  display: block;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 7px 8px;
+  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.16);
+  font-family: var(--code-font-family);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-command.full {
+  margin: 0;
+}
+
+.agent-detail-section {
+  margin-top: 12px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--glass-bg);
+}
+
+.agent-detail-section h2 {
+  margin: 0 0 8px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.agent-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.agent-summary-grid .kv-row {
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--glass-bg);
+}
+
+.agent-summary-grid .kv-row span,
+.agent-summary-grid .kv-row strong {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.agent-output-block {
+  margin-top: 10px;
+  border-top: 1px solid var(--glass-border);
+  padding-top: 10px;
+}
+
+.agent-output-block h3 {
+  margin: 0 0 8px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.reasoning-section {
+  border-color: rgba(110, 168, 254, 0.34);
+}
+
+.command-section {
+  border-color: rgba(245, 158, 11, 0.34);
+}
+
+.file-section {
+  border-color: rgba(74, 123, 247, 0.34);
+}
+
+.error-section {
+  border-color: rgba(239, 68, 68, 0.36);
+}
+
+.subagent-section {
+  border-color: rgba(245, 158, 11, 0.38);
+}
+
+.subagent-description {
+  margin-bottom: 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.agent-detail-note {
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.patch-preview {
+  margin: 0;
+  white-space: pre-wrap;
+}

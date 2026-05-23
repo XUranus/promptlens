@@ -1,0 +1,215 @@
+/* ============================================================
+   Detail View (Conversation Pane)
+   ============================================================ */
+
+.detail-view {
+  height: 100%;
+  overflow: auto;
+  padding: 20px 24px 40px;
+}
+
+.detail-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.detail-title h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.detail-title p {
+  margin: 5px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* ============================================================
+   Messages
+   ============================================================ */
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.message-card {
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 14px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
+  overflow: hidden;
+  transition: box-shadow 200ms var(--ease), border-color 200ms var(--ease);
+}
+
+.message-card:hover {
+  box-shadow: var(--glass-shadow-lg), var(--glass-highlight);
+  border-color: var(--glass-border-strong);
+}
+
+.message-role {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.message-content {
+  padding: 14px;
+  overflow: visible;
+}
+
+.message-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.message-actions button,
+.panel-actions button,
+.json-leaf button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  padding: 3px 7px;
+  color: var(--text-secondary);
+  background: var(--glass-bg);
+  cursor: pointer;
+  font-size: 11px;
+  text-transform: none;
+  transition: all 150ms var(--ease);
+}
+
+.message-actions button:hover,
+.panel-actions button:hover,
+.json-leaf button:hover {
+  color: var(--text-primary);
+  background: var(--glass-bg-hover);
+  border-color: var(--glass-border-strong);
+}
+
+.message-actions button.active {
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-color: var(--glass-border-accent);
+}
+
+/* ============================================================
+   Markdown
+   ============================================================ */
+
+.markdown {
+  line-height: 1.6;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.markdown :first-child {
+  margin-top: 0;
+}
+
+.markdown :last-child {
+  margin-bottom: 0;
+}
+
+.markdown pre,
+.code-block {
+  overflow: auto;
+  border-radius: 10px;
+  padding: 12px;
+  color: var(--text-primary);
+  background: var(--code-bg);
+  border: 1px solid var(--glass-border);
+  font-size: 12px;
+  font-family: var(--code-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+}
+
+.markdown code {
+  border-radius: 5px;
+  padding: 2px 5px;
+  background: var(--code-bg);
+  font-size: 12px;
+}
+
+.plain-text-block {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+  color: var(--text-primary);
+  font-family: var(--app-font-family, Inter, ui-sans-serif, system-ui, sans-serif);
+  font-size: 13px;
+}
+
+.json-code {
+  white-space: pre-wrap;
+}
+
+.json-token-key {
+  color: #7cc4f7;
+}
+
+.json-token-string,
+.json-string {
+  color: #9bd88f;
+}
+
+.json-token-number,
+.json-number {
+  color: #f8c77e;
+}
+
+.json-token-boolean,
+.json-boolean {
+  color: #c69cff;
+}
+
+.json-token-null,
+.json-null {
+  color: var(--text-tertiary);
+}
+
+/* ============================================================
+   Error Cards
+   ============================================================ */
+
+.record-error {
+  margin: 20px;
+  padding: 14px;
+  border: 1px solid var(--danger-border);
+  border-radius: 12px;
+  color: var(--danger-text);
+  background: var(--danger-bg);
+  font-size: 12px;
+}
+
+.error-card {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--danger-border);
+  border-radius: 12px;
+  color: var(--danger-text);
+  background: var(--danger-bg);
+}
+
+.error-card p {
+  margin: 5px 0 0;
+  font-size: 12px;
+}

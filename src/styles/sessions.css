@@ -1,0 +1,214 @@
+/* ============================================================
+   Diff
+   ============================================================ */
+
+.diff-metrics {
+  display: grid;
+  gap: 5px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.inline-filter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+
+.inline-filter-row.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.inline-filter-row select,
+.inline-filter-row input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 7px;
+  padding: 0 9px;
+  color: var(--text-primary);
+  background: var(--glass-bg);
+  outline: none;
+  font-size: 12px;
+}
+
+.inline-filter-row input::placeholder {
+  color: var(--text-faint);
+}
+
+.virtual-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.virtual-list.agent-timeline,
+.virtual-list.subagent-list,
+.virtual-list.agent-files-list {
+  display: block;
+}
+
+.virtual-row {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  min-height: 0;
+  will-change: transform;
+}
+
+.session-list,
+.agent-timeline,
+.subagent-list,
+.agent-files-list,
+.issue-list,
+.rank-list,
+.export-actions,
+.trace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-card,
+.agent-event-card,
+.subagent-card,
+.agent-file-card,
+.issue-card,
+.export-actions button,
+.trace-card {
+  width: 100%;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--text-primary);
+  text-align: left;
+  background: var(--glass-bg);
+  cursor: pointer;
+  transition: all 150ms var(--ease);
+  box-shadow: var(--glass-shadow);
+}
+
+.session-card:hover,
+.agent-event-card:hover,
+.subagent-card:hover,
+.agent-file-card:hover,
+.issue-card:hover,
+.export-actions button:hover,
+.trace-card:hover {
+  background: var(--glass-bg-hover);
+  border-color: var(--glass-border-strong);
+  box-shadow: var(--glass-shadow-lg);
+  transform: translateY(-1px);
+}
+
+.session-card.active,
+.agent-event-card.active,
+.subagent-card.active,
+.agent-file-card.active,
+.issue-card.active,
+.trace-card.active,
+.search-results button.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px rgba(74, 123, 247, 0.24);
+}
+
+.trace-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.trace-head strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.trace-head button {
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 7px;
+  padding: 3px 8px;
+  color: var(--text-secondary);
+  background: var(--glass-bg);
+  font-size: 11px;
+  transition: all 150ms var(--ease);
+}
+
+.trace-head button:hover {
+  color: var(--text-primary);
+  background: var(--glass-bg-hover);
+}
+
+.trace-node {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr) minmax(0, 100px);
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--glass-border);
+  padding: 6px 0;
+  color: var(--text-primary);
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+  transition: background 120ms var(--ease);
+  font-size: 12px;
+}
+
+.trace-node:hover {
+  background: var(--glass-bg-hover);
+}
+
+.trace-node.active {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.trace-node strong,
+.trace-node small {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.trace-node span,
+.trace-node small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.session-top,
+.session-metrics,
+.rank-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-top span,
+.session-metrics,
+.issue-card small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.session-metrics {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}

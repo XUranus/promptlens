@@ -1,5 +1,6 @@
 use crate::cache::open_cache;
 use crate::types::*;
+use regex::Regex;
 use rusqlite::params;
 use std::{
     fs::{self, File},
@@ -79,6 +80,7 @@ fn index_file_from_offset(
 pub(crate) fn search_jsonl_inner(
     file_path: String,
     query: String,
+    mode: &str,
     app: Option<&AppHandle>,
     cancel_flag: Option<&AtomicBool>,
 ) -> Result<SearchResponse, String> {
@@ -94,15 +96,25 @@ pub(crate) fn search_jsonl_inner(
         });
     }
 
-    if let Ok(Some(indexed)) = search_indexed(&file_path, &needle, started) {
-        return Ok(indexed);
+    // Try indexed search for substring and fts modes
+    if mode != "regex" {
+        if let Ok(Some(indexed)) = search_indexed(&file_path, &needle, mode, started) {
+            return Ok(indexed);
+        }
     }
+
+    // Regex mode: compile pattern
+    let re = if mode == "regex" {
+        Some(Regex::new(&query).map_err(|e| format!("Invalid regex: {e}"))?)
+    } else {
+        None
+    };
 
     let file = File::open(&file_path).map_err(|err| format!("Failed to open file: {err}"))?;
     let total_bytes = fs::metadata(&file_path)
         .map_err(|err| format!("Failed to read metadata: {err}"))?
         .len();
-    let mut reader = BufReader::new(file);
+    let mut reader = BufReader::with_capacity(256 * 1024, file);
     let mut results = Vec::new();
     let mut line = String::new();
     let mut byte_offset = 0u64;
@@ -127,7 +139,7 @@ pub(crate) fn search_jsonl_inner(
         line_number += 1;
         let current_offset = byte_offset;
         byte_offset += bytes_read as u64;
-        if line_number == 1 || line_number % 500 == 0 {
+        if line_number == 1 || line_number % 250 == 0 {
             if let Some(app) = app {
                 let _ = app.emit(
                     "search-progress",
@@ -139,15 +151,35 @@ pub(crate) fn search_jsonl_inner(
                 );
             }
         }
-        let haystack = line.to_lowercase();
-        if let Some(index) = haystack.find(&needle) {
-            let prefix_chars = haystack[..index].chars().count();
-            let start_chars = prefix_chars.saturating_sub(80);
-            let end_chars = prefix_chars + needle.chars().count() + 120;
+
+        let matched = if let Some(re) = &re {
+            re.is_match(&line)
+        } else {
+            line.to_lowercase().contains(&needle)
+        };
+
+        if matched {
+            let (start_chars, match_len) = if let Some(re) = &re {
+                if let Some(m) = re.find(&line) {
+                    let prefix = &line[..m.start()];
+                    (prefix.chars().count(), m.as_str().chars().count())
+                } else {
+                    (0, 0)
+                }
+            } else {
+                let haystack = line.to_lowercase();
+                if let Some(index) = haystack.find(&needle) {
+                    (haystack[..index].chars().count(), needle.chars().count())
+                } else {
+                    (0, 0)
+                }
+            };
+            let context_start = start_chars.saturating_sub(80);
+            let context_end = start_chars + match_len + 120;
             let context = line
                 .chars()
-                .skip(start_chars)
-                .take(end_chars.saturating_sub(start_chars))
+                .skip(context_start)
+                .take(context_end.saturating_sub(context_start))
                 .collect::<String>();
             results.push(SearchResult {
                 line_number,
@@ -173,10 +205,16 @@ pub(crate) fn search_jsonl_inner(
 fn search_indexed(
     file_path: &str,
     query: &str,
+    mode: &str,
     started: Instant,
 ) -> Result<Option<SearchResponse>, String> {
     let conn = open_cache()?;
-    let phrase = format!("\"{}\"", query.replace('"', "\"\""));
+    // fts mode uses tokenized search, substring uses phrase matching
+    let match_query = if mode == "fts" {
+        query.to_string()
+    } else {
+        format!("\"{}\"", query.replace('"', "\"\""))
+    };
     let mut stmt = conn
         .prepare(
             "SELECT line_number, byte_offset, substr(content, 1, 240)
@@ -186,7 +224,11 @@ fn search_indexed(
         )
         .map_err(|err| format!("Failed to prepare indexed search: {err}"))?;
     let mut rows = stmt
-        .query(params![file_path, phrase, (MAX_SEARCH_RESULTS + 1) as i64])
+        .query(params![
+            file_path,
+            match_query,
+            (MAX_SEARCH_RESULTS + 1) as i64
+        ])
         .map_err(|err| format!("Failed to query indexed search: {err}"))?;
     let mut results = Vec::new();
     while let Some(row) = rows

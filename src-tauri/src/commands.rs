@@ -161,9 +161,16 @@ fn search_jsonl(
     state: State<AppState>,
     file_path: String,
     query: String,
+    mode: Option<String>,
 ) -> Result<SearchResponse, String> {
     state.cancel_search.store(false, Ordering::Relaxed);
-    search_jsonl_inner(file_path, query, Some(&app), Some(&state.cancel_search))
+    search_jsonl_inner(
+        file_path,
+        query,
+        mode.as_deref().unwrap_or("substring"),
+        Some(&app),
+        Some(&state.cancel_search),
+    )
 }
 
 #[tauri::command]

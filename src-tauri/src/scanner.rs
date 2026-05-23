@@ -38,7 +38,7 @@ pub(crate) fn scan_jsonl_inner(
         return Ok(cached);
     }
 
-    let mut reader = BufReader::new(file);
+    let mut reader = BufReader::with_capacity(256 * 1024, file);
     let mut summaries = Vec::new();
     let mut total_lines = 0usize;
     let mut valid_records = 0usize;
@@ -65,7 +65,7 @@ pub(crate) fn scan_jsonl_inner(
         let current_offset = byte_offset;
         byte_offset += bytes_read as u64;
 
-        if total_lines == 1 || total_lines % 500 == 0 {
+        if total_lines == 1 || total_lines % 250 == 0 {
             if let Some(app) = app {
                 let _ = app.emit(
                     "scan-progress",

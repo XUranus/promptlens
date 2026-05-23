@@ -1,0 +1,223 @@
+/* ============================================================
+   Toolbar
+   ============================================================ */
+
+.toolbar {
+  position: relative;
+  z-index: 260;
+  flex: 0 0 48px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--blur-md) saturate(180%);
+  -webkit-backdrop-filter: var(--blur-md) saturate(180%);
+  border-bottom: 1px solid var(--glass-border);
+  box-shadow: var(--glass-highlight);
+  -webkit-app-region: no-drag;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: 170px;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+  opacity: 0.9;
+}
+
+.brand svg {
+  opacity: 0.75;
+}
+
+/* ============================================================
+   Buttons
+   ============================================================ */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: var(--glass-bg);
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 150ms var(--ease);
+  box-shadow: var(--glass-highlight), 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.button:hover {
+  background: var(--glass-bg-hover);
+  border-color: var(--glass-border-strong);
+  box-shadow: var(--glass-highlight), 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+
+.button:active {
+  transform: scale(0.97);
+}
+
+.button.primary {
+  border-color: var(--glass-border-accent);
+  background: var(--accent-bg-strong);
+  color: var(--accent);
+  box-shadow: var(--glass-highlight), var(--accent-glow);
+}
+
+.button.primary:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+
+.button:disabled {
+  opacity: 0.40;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ============================================================
+   Inputs & Selects
+   ============================================================ */
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 260px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 8px;
+  background: var(--glass-bg-subtle);
+  box-shadow: var(--glass-inset);
+  transition: all 150ms var(--ease);
+}
+
+.search-box:focus-within {
+  border-color: var(--glass-border-accent);
+  box-shadow: var(--glass-inset), var(--accent-glow);
+}
+
+.search-box svg {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.search-box input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  color: var(--text-primary);
+  background: transparent;
+  font-size: 12px;
+}
+
+.search-box input::placeholder {
+  color: var(--text-tertiary);
+}
+
+select {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: var(--glass-bg-subtle);
+  box-shadow: var(--glass-inset);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 150ms var(--ease);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238b95a5' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 22px;
+}
+
+select:hover {
+  border-color: var(--glass-border-strong);
+}
+
+select:focus {
+  outline: none;
+  border-color: var(--glass-border-accent);
+  box-shadow: var(--glass-inset), var(--accent-glow);
+}
+
+.recent-select {
+  width: 96px;
+}
+
+.source-select {
+  width: 126px;
+}
+
+.threshold-input {
+  width: 86px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: var(--glass-bg-subtle);
+  box-shadow: var(--glass-inset);
+  font-size: 12px;
+  transition: all 150ms var(--ease);
+}
+
+.threshold-input:focus {
+  outline: none;
+  border-color: var(--glass-border-accent);
+  box-shadow: var(--glass-inset), var(--accent-glow);
+}
+
+.threshold-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* ============================================================
+   Icon Buttons
+   ============================================================ */
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: var(--glass-bg);
+  cursor: pointer;
+  transition: all 150ms var(--ease);
+  box-shadow: var(--glass-highlight);
+}
+
+.icon-button:hover {
+  color: var(--text-primary);
+  background: var(--glass-bg-hover);
+  border-color: var(--glass-border-strong);
+}
+
+.icon-button:active {
+  transform: scale(0.95);
+}
+
+.icon-button.active {
+  color: var(--accent);
+  border-color: var(--glass-border-accent);
+  background: var(--accent-bg);
+  box-shadow: var(--accent-glow);
+}

@@ -593,6 +593,7 @@ mod tests {
         let response = search_jsonl_inner(
             file.path().to_string_lossy().to_string(),
             "needle".to_string(),
+            "substring",
             None,
             None,
         )
@@ -628,7 +629,8 @@ mod tests {
         assert_eq!(appended.summaries[0].line_number, 2);
         assert_eq!(appended.next_line_number, 2);
 
-        let response = search_jsonl_inner(path, "needle".to_string(), None, None).unwrap();
+        let response =
+            search_jsonl_inner(path, "needle".to_string(), "substring", None, None).unwrap();
         assert!(response.indexed);
         assert_eq!(response.results[0].line_number, 2);
         let cached =

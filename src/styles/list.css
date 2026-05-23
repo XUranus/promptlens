@@ -1,0 +1,181 @@
+/* ============================================================
+   File Header
+   ============================================================ */
+
+.file-header {
+  height: 58px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--glass-border);
+  background: var(--glass-bg-subtle);
+}
+
+.file-header.muted {
+  color: var(--text-tertiary);
+}
+
+.file-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 650;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.file-stats {
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+/* ============================================================
+   Log List (Virtual Scrolling)
+   ============================================================ */
+
+.log-list {
+  height: calc(100% - 58px);
+  overflow: auto;
+}
+
+.log-row {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 74px;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--glass-border);
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+  transition: background 120ms var(--ease);
+}
+
+.log-row:hover {
+  background: var(--glass-bg-hover);
+}
+
+.log-row.selected {
+  background: var(--surface-selected);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.log-row.new-record {
+  border-left: 3px solid var(--success);
+  background: var(--success-bg);
+}
+
+.log-row.new-record.selected,
+.log-row.new-record:hover {
+  background: rgba(52, 211, 153, 0.14);
+}
+
+.row-top,
+.row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 620;
+  font-size: 12.5px;
+  color: var(--text-primary);
+}
+
+.new-badge {
+  flex: 0 0 auto;
+  border: 1px solid var(--success-border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  color: var(--success);
+  font-size: 9px;
+  line-height: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.time {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.row-meta {
+  margin-top: 3px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.row-spacer {
+  flex: 1;
+}
+
+.row-compare {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 18px;
+  border: 1px solid var(--glass-border);
+  border-radius: 5px;
+  color: var(--text-tertiary);
+  transition: all 150ms var(--ease);
+}
+
+.row-compare:hover {
+  color: var(--accent);
+  border-color: var(--glass-border-accent);
+  background: var(--accent-bg);
+}
+
+.preview {
+  overflow: hidden;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+}
+
+/* ============================================================
+   Status Dots & Pills
+   ============================================================ */
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.2);
+}
+
+.status-dot.success,
+.pill.success {
+  background: var(--success);
+}
+
+.status-dot.error,
+.status-dot.invalid_json,
+.pill.error,
+.pill.invalid_json {
+  background: var(--danger);
+}
+
+.pill {
+  border-radius: 999px;
+  padding: 3px 9px;
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+}

@@ -1,0 +1,47 @@
+/* ============================================================
+   Metadata Key-Value
+   ============================================================ */
+
+.metadata-view hr,
+.metadata-content hr {
+  margin: 12px 0;
+  border: 0;
+  border-top: 1px solid var(--glass-border);
+}
+
+.kv-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--glass-border);
+  font-size: 12px;
+}
+
+.kv-row span {
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.kv-row strong {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ============================================================
+   Panel Actions
+   ============================================================ */
+
+.panel-actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.panel-actions.wrap {
+  flex-wrap: wrap;
+}

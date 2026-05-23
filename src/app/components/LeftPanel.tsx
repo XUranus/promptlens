@@ -13,6 +13,7 @@ import {
   Users,
   Wrench,
 } from "lucide-react";
+import { BarChart, Histogram } from "./Charts";
 import { formatLatency, formatTime, formatTokens } from "../../lib/format";
 import type {
   AgentEvent,
@@ -97,7 +98,7 @@ export function LeftPanel({
   analytics: AnalyticsSummary;
   detail: RecordDetail | null;
   costEstimates: CostEstimate[];
-  onSearch: () => void;
+  onSearch: (mode?: string) => void;
   onSelect: (summary: import("../../types").LogSummary) => void;
   onCompare: (summary: import("../../types").LogSummary) => void;
   onJump: (result: SearchResult) => void;
@@ -801,9 +802,11 @@ function AnalyticsView({
         {totalCost > 0 ? <MetricTile label="Avg Cost" value={`$${(totalCost / (filtered.length || 1)).toFixed(6)}`} /> : null}
       </div>
       <h3>Models</h3>
-      <RankList rows={analytics.topModels} />
+      <BarChart rows={analytics.topModels} />
       <h3>Providers</h3>
-      <RankList rows={analytics.topProviders} />
+      <BarChart rows={analytics.topProviders} />
+      <h3>Latency Distribution</h3>
+      <Histogram values={filtered.flatMap((r) => (r.latencyMs != null ? [r.latencyMs] : []))} />
       <h3>Metadata</h3>
       <MetadataContent detail={detail} file={file} agentEvent={agentEvent} />
     </div>
@@ -819,18 +822,7 @@ function MetricTile({ label, value }: { label: string; value: string }) {
   );
 }
 
-function RankList({ rows }: { rows: Array<{ name: string; count: number }> }) {
-  return (
-    <div className="rank-list">
-      {rows.map((row) => (
-        <div key={row.name} className="rank-row">
-          <span>{row.name}</span>
-          <strong>{row.count.toLocaleString()}</strong>
-        </div>
-      ))}
-    </div>
-  );
-}
+
 
 function MetadataContent({
   detail,
@@ -956,9 +948,10 @@ function SearchPanel({
   results: SearchResult[];
   indexed: boolean | null;
   selected: import("../../types").LogSummary | null;
-  onSearch: () => void;
+  onSearch: (mode: string) => void;
   onJump: (result: SearchResult) => void;
 }) {
+  const [mode, setMode] = useState<"substring" | "regex" | "fts">("substring");
   return (
     <div className="search-panel">
       <div className="file-search">
@@ -966,10 +959,15 @@ function SearchPanel({
           id="file-search-input"
           value={term}
           onChange={(event) => setTerm(event.target.value)}
-          onKeyDown={(event) => event.key === "Enter" && onSearch()}
-          placeholder="Search raw JSONL"
+          onKeyDown={(event) => event.key === "Enter" && onSearch(mode)}
+          placeholder={mode === "regex" ? "Regex pattern" : "Search raw JSONL"}
         />
-        <button onClick={onSearch} disabled={searching}>
+        <select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)} className="search-mode-select">
+          <option value="substring">Text</option>
+          <option value="regex">Regex</option>
+          <option value="fts">FTS</option>
+        </select>
+        <button onClick={() => onSearch(mode)} disabled={searching}>
           {searching ? "Searching" : "Search"}
         </button>
       </div>

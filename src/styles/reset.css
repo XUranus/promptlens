@@ -1,0 +1,66 @@
+/* ============================================================
+   Reset & Base
+   ============================================================ */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 980px;
+  min-height: 100vh;
+  overflow: hidden;
+  background: var(--app-bg);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+/* ============================================================
+   Background Gradient Orbs
+   ============================================================ */
+
+.app-bg-orbs {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.app-bg-orbs::before,
+.app-bg-orbs::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+}
+
+/* Dark: purple orb top-left, blue orb bottom-right */
+.app-bg-orbs::before {
+  top: -10%;
+  left: -5%;
+  width: 50%;
+  height: 50%;
+  background: radial-gradient(circle, rgba(88, 60, 180, 0.18) 0%, transparent 70%);
+}
+
+.app-bg-orbs::after {
+  bottom: -15%;
+  right: -5%;
+  width: 55%;
+  height: 55%;
+  background: radial-gradient(circle, rgba(40, 90, 180, 0.14) 0%, transparent 70%);
+}
+
+:root[data-theme="light"] .app-bg-orbs::before {
+  background: radial-gradient(circle, rgba(180, 140, 200, 0.10) 0%, transparent 70%);
+}
+
+:root[data-theme="light"] .app-bg-orbs::after {
+  background: radial-gradient(circle, rgba(100, 160, 220, 0.08) 0%, transparent 70%);
+}

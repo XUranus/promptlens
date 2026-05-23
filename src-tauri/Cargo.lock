@@ -2817,6 +2817,7 @@ dependencies = [
  "dirs",
  "infer",
  "notify",
+ "regex",
  "rfd",
  "rusqlite",
  "serde",

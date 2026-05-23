@@ -1,0 +1,154 @@
+/* ============================================================
+   Metric Tiles & Analytics
+   ============================================================ */
+
+.metric-grid,
+.export-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.metric-tile {
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--glass-bg);
+  box-shadow: var(--glass-shadow), var(--glass-highlight);
+  transition: all 200ms var(--ease);
+}
+
+.metric-tile:hover {
+  border-color: var(--glass-border-strong);
+  box-shadow: var(--glass-shadow-lg), var(--glass-highlight);
+}
+
+.metric-tile span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.metric-tile strong {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.rank-row {
+  border-bottom: 1px solid var(--glass-border);
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+/* ============================================================
+   Bar Chart & Histogram
+   ============================================================ */
+
+.bar-chart,
+.histogram {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.bar-row,
+.hist-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bar-label,
+.hist-label {
+  width: 80px;
+  min-width: 80px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track,
+.hist-track {
+  flex: 1;
+  height: 14px;
+  background: var(--glass-bg-subtle);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 300ms var(--ease);
+  min-width: 2px;
+}
+
+.hist-fill {
+  height: 100%;
+  background: var(--accent-secondary, var(--accent));
+  border-radius: 4px;
+  transition: width 300ms var(--ease);
+  min-width: 2px;
+}
+
+.bar-value,
+.hist-value {
+  width: 40px;
+  min-width: 40px;
+  text-align: right;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ============================================================
+   Issue Cards
+   ============================================================ */
+
+.issue-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.issue-card div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.issue-card span {
+  overflow-wrap: anywhere;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.issue-card.high {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.issue-card.medium {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+}
+
+.export-summary {
+  margin-bottom: 10px;
+}
+
+.export-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}

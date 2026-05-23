@@ -1,0 +1,100 @@
+/* ============================================================
+   Banners
+   ============================================================ */
+
+.error-banner {
+  position: relative;
+  z-index: 260;
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--danger-border);
+  color: var(--danger-text);
+  background: var(--danger-bg);
+  font-size: 12px;
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
+}
+
+.warning-banner {
+  position: relative;
+  z-index: 260;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--warning-border);
+  color: var(--text-primary);
+  background: var(--warning-bg);
+  font-size: 12px;
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
+}
+
+.warning-banner button {
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 8px;
+  padding: 4px 10px;
+  color: var(--text-primary);
+  background: var(--glass-bg);
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 150ms var(--ease);
+}
+
+.warning-banner button:hover {
+  background: var(--glass-bg-hover);
+}
+
+/* ============================================================
+   Progress Strip
+   ============================================================ */
+
+.progress-strip {
+  position: relative;
+  z-index: 260;
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+  background: var(--glass-bg-subtle);
+  font-size: 11px;
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
+}
+
+.progress-track {
+  overflow: hidden;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--glass-border-strong);
+}
+
+.progress-track div {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 300ms var(--ease);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.progress-strip button {
+  height: 24px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: var(--glass-bg);
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 150ms var(--ease);
+}
+
+.progress-strip button:hover {
+  color: var(--text-primary);
+  background: var(--glass-bg-hover);
+}

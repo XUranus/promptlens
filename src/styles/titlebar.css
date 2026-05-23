@@ -1,0 +1,249 @@
+/* ============================================================
+   Title Bar (Custom Window Chrome)
+   ============================================================ */
+
+.title-bar {
+  position: relative;
+  z-index: 300;
+  flex: 0 0 36px;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  gap: 10px;
+  padding: 0 10px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--blur-lg) saturate(180%);
+  -webkit-backdrop-filter: var(--blur-lg) saturate(180%);
+  border-bottom: 1px solid var(--glass-border);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.app-menu-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  -webkit-app-region: no-drag;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: 170px;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  color: var(--text-primary);
+  opacity: 0.9;
+}
+
+.brand.compact {
+  width: auto;
+  min-width: 132px;
+}
+
+.brand svg {
+  opacity: 0.75;
+}
+
+.app-menu {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.app-menu button {
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.app-menu button:hover,
+.app-menu button.active {
+  color: var(--text-primary);
+  border-color: var(--glass-border);
+  background: var(--glass-bg-hover);
+}
+
+.traffic-lights {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+}
+
+.traffic-lights button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  transition: all 120ms var(--ease);
+  color: transparent;
+}
+
+.tl-close {
+  background: #ff5f57;
+}
+
+.tl-minimize {
+  background: #febc2e;
+}
+
+.tl-maximize {
+  background: #28c840;
+}
+
+.traffic-lights button:hover {
+  color: rgba(0, 0, 0, 0.55);
+}
+
+.traffic-lights button:active {
+  opacity: 0.70;
+}
+
+.window-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--glass-border);
+}
+
+.title-bar-drag {
+  flex: 1;
+  height: 100%;
+}
+
+.title-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+}
+
+.tl-theme {
+  width: 26px;
+  height: 26px;
+}
+
+.menu-popover {
+  position: absolute;
+  top: 36px;
+  left: 150px;
+  z-index: 500;
+  display: grid;
+  gap: 8px;
+  width: 280px;
+  padding: 12px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 10px;
+  background: var(--glass-bg-strong);
+  box-shadow: var(--glass-shadow-lg);
+  backdrop-filter: var(--blur-lg) saturate(180%);
+  -webkit-backdrop-filter: var(--blur-lg) saturate(180%);
+  -webkit-app-region: no-drag;
+}
+
+.settings-menu {
+  left: 208px;
+  gap: 10px;
+  width: 320px;
+}
+
+.export-menu {
+  left: 198px;
+  width: 300px;
+}
+
+.menu-section {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.menu-section:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.menu-section button,
+.settings-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0 8px;
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+
+.menu-item-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.menu-section kbd {
+  flex: 0 0 auto;
+  border: 1px solid var(--glass-border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: var(--text-tertiary);
+  background: var(--glass-bg-subtle);
+  font-family: var(--code-font-family);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.menu-section button:hover,
+.settings-menu button:hover {
+  border-color: var(--glass-border);
+  background: var(--glass-bg-hover);
+}
+
+.menu-section button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.menu-caption,
+.menu-empty {
+  padding: 2px 8px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+}
+
+.settings-menu label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.settings-menu select,
+.settings-menu input {
+  width: 100%;
+}

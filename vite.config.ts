@@ -8,4 +8,9 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
   },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+  },
 });

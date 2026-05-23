@@ -70,8 +70,8 @@ export async function readAgentSession(filePath: string, logSource: LogSource = 
   return invoke("read_agent_session", { filePath, logSource });
 }
 
-export async function searchJsonl(filePath: string, query: string): Promise<SearchResponse> {
-  return invoke("search_jsonl", { filePath, query });
+export async function searchJsonl(filePath: string, query: string, mode: string = "substring"): Promise<SearchResponse> {
+  return invoke("search_jsonl", { filePath, query, mode });
 }
 
 export async function cancelSearch(): Promise<void> {

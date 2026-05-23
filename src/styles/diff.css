@@ -1,0 +1,68 @@
+/* ============================================================
+   Diff Metrics
+   ============================================================ */
+
+.diff-metric {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  font-size: 11px;
+  background: var(--glass-bg-subtle);
+}
+
+.diff-metric span {
+  color: var(--text-tertiary);
+}
+
+.diff-metric strong {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.diff-metric.changed {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+}
+
+.side-by-side {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.side-by-side pre,
+.text-diff {
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--code-bg);
+  font-size: 11px;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.diff-line {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 6px;
+  min-height: 20px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.diff-line.added {
+  background: rgba(52, 211, 153, 0.10);
+}
+
+.diff-line.removed {
+  background: rgba(248, 113, 113, 0.10);
+}

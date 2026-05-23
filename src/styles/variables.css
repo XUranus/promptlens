@@ -1,0 +1,114 @@
+/* ============================================================
+   PromptLens — Frosted Glass macOS Design System
+   ============================================================ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surface layers (back to front) */
+  --app-bg: #0a0c10;
+  --glass-bg: rgba(22, 27, 36, 0.72);
+  --glass-bg-strong: rgba(28, 33, 44, 0.88);
+  --glass-bg-subtle: rgba(18, 22, 30, 0.55);
+  --glass-bg-hover: rgba(38, 44, 58, 0.72);
+
+  /* Borders & edges */
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-strong: rgba(255, 255, 255, 0.14);
+  --glass-border-accent: rgba(91, 156, 246, 0.30);
+
+  /* Shadows & highlights */
+  --glass-shadow: 0 2px 20px rgba(0, 0, 0, 0.35);
+  --glass-shadow-lg: 0 8px 40px rgba(0, 0, 0, 0.45);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --glass-inset: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+
+  /* Typography */
+  --text-primary: #e8eaed;
+  --text-secondary: #8b95a5;
+  --text-tertiary: #5a6370;
+  --text-inverse: #1d1d1f;
+
+  /* Accent */
+  --accent: #5b9cf6;
+  --accent-hover: #7ab3ff;
+  --accent-bg: rgba(91, 156, 246, 0.15);
+  --accent-bg-strong: rgba(91, 156, 246, 0.25);
+  --accent-glow: 0 0 16px rgba(91, 156, 246, 0.20);
+
+  /* Semantic */
+  --surface-selected: rgba(91, 156, 246, 0.10);
+  --success: #34d399;
+  --success-bg: rgba(52, 211, 153, 0.12);
+  --success-border: rgba(52, 211, 153, 0.25);
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.10);
+  --danger-border: rgba(248, 113, 113, 0.25);
+  --danger-text: #fecaca;
+  --warning: #fbbf24;
+  --warning-bg: rgba(251, 191, 36, 0.10);
+  --warning-border: rgba(251, 191, 36, 0.25);
+
+  /* Code */
+  --code-bg: rgba(8, 10, 15, 0.60);
+
+  /* Blur presets */
+  --blur-sm: blur(12px);
+  --blur-md: blur(20px);
+  --blur-lg: blur(28px);
+
+  /* Transitions */
+  --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--app-bg);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --app-bg: #e8ecf1;
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-bg-strong: rgba(255, 255, 255, 0.82);
+  --glass-bg-subtle: rgba(255, 255, 255, 0.40);
+  --glass-bg-hover: rgba(240, 244, 250, 0.65);
+
+  --glass-border: rgba(255, 255, 255, 0.60);
+  --glass-border-strong: rgba(0, 0, 0, 0.08);
+  --glass-border-accent: rgba(52, 120, 246, 0.30);
+
+  --glass-shadow: 0 2px 16px rgba(0, 0, 0, 0.06);
+  --glass-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.08);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.80);
+  --glass-inset: inset 0 1px 3px rgba(0, 0, 0, 0.06);
+
+  --text-primary: #1d1d1f;
+  --text-secondary: #6e7681;
+  --text-tertiary: #9ca3af;
+  --text-inverse: #ffffff;
+
+  --accent: #3478f6;
+  --accent-hover: #2563eb;
+  --accent-bg: rgba(52, 120, 246, 0.10);
+  --accent-bg-strong: rgba(52, 120, 246, 0.18);
+  --accent-glow: 0 0 12px rgba(52, 120, 246, 0.15);
+
+  --surface-selected: rgba(52, 120, 246, 0.08);
+  --success: #059669;
+  --success-bg: rgba(5, 150, 105, 0.08);
+  --success-border: rgba(5, 150, 105, 0.20);
+  --danger: #dc2626;
+  --danger-bg: rgba(220, 38, 38, 0.06);
+  --danger-border: rgba(220, 38, 38, 0.20);
+  --danger-text: #991b1b;
+  --warning: #d97706;
+  --warning-bg: rgba(217, 119, 6, 0.08);
+  --warning-border: rgba(217, 119, 6, 0.20);
+
+  --code-bg: rgba(0, 0, 0, 0.04);
+}
