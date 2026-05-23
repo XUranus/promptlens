@@ -2,10 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AgentSessionResult,
   CacheInfo,
+  ComputedAnalytics,
+  CostEstimate,
   FileScanResult,
   FileStatus,
   IncrementalScanResult,
   LogSource,
+  ModelPricing,
   RecordDetail,
   SearchResponse,
 } from "./types";
@@ -77,4 +80,26 @@ export async function cancelSearch(): Promise<void> {
 
 export async function listSystemFonts(): Promise<string[]> {
   return invoke("list_system_fonts");
+}
+
+export async function getPricingTable(): Promise<ModelPricing[]> {
+  return invoke("get_pricing_table");
+}
+
+export async function calculateCosts(
+  requests: Array<{ model: string; prompt_tokens?: number; completion_tokens?: number }>,
+): Promise<CostEstimate[]> {
+  return invoke("calculate_costs", { requests });
+}
+
+export async function startFileWatch(filePath: string): Promise<void> {
+  return invoke("start_file_watch", { filePath });
+}
+
+export async function stopFileWatch(): Promise<void> {
+  return invoke("stop_file_watch");
+}
+
+export async function computeAnalytics(filePath: string): Promise<ComputedAnalytics> {
+  return invoke("compute_analytics", { filePath });
 }

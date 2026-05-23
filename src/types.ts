@@ -189,3 +189,75 @@ export type AgentSessionResult = {
   sessions: string[];
   events: AgentEvent[];
 };
+
+export type ModelPricing = {
+  model: string;
+  provider: string;
+  input_per_mtok: number;
+  output_per_mtok: number;
+};
+
+export type CostEstimate = {
+  model: string;
+  input_cost: number;
+  output_cost: number;
+  total_cost: number;
+  matched_pricing: string | null;
+};
+
+export type AnalyticsSummary = {
+  total: number;
+  success: number;
+  errors: number;
+  invalid: number;
+  errorRate: number;
+  p95Latency?: number;
+  p99Latency?: number;
+  totalTokens: number;
+  p95Tokens?: number;
+  topModels: NameCount[];
+  topProviders: NameCount[];
+};
+
+export type NameCount = {
+  name: string;
+  count: number;
+};
+
+export type IssueRecord = {
+  lineNumber: number;
+  byteOffset: number;
+  kind: string;
+  message: string;
+  severity: string;
+  model?: string;
+};
+
+export type SessionGroup = {
+  id: string;
+  label: string;
+  startLine: number;
+  endLine: number;
+  startTime?: string;
+  endTime?: string;
+  provider: string;
+  model: string;
+  traceKey?: string;
+  recordCount: number;
+  errors: number;
+  totalTokens: number;
+  avgLatencyMs?: number;
+};
+
+export type FilterOptions = {
+  providers: string[];
+  models: string[];
+  traces: string[];
+};
+
+export type ComputedAnalytics = {
+  analytics: AnalyticsSummary;
+  issues: IssueRecord[];
+  sessions: SessionGroup[];
+  filterOptions: FilterOptions;
+};

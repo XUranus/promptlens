@@ -1,9 +1,9 @@
 use serde_json::Value;
 
-use crate::{
-    agent_command, agent_file_paths, agent_role, agent_text, agent_text_from_content, contains_key,
-    first_string,
+use crate::agent::{
+    agent_command, agent_file_paths, agent_role, agent_text, agent_text_from_content,
 };
+use crate::normalize::{contains_key, first_string};
 
 #[derive(Debug, Default)]
 pub(crate) struct AgentEventAdapterFields {

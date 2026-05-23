@@ -1,0 +1,110 @@
+[
+  {
+    "model": "gpt-4o",
+    "provider": "openai",
+    "input_per_mtok": 2.50,
+    "output_per_mtok": 10.00
+  },
+  {
+    "model": "gpt-4o-mini",
+    "provider": "openai",
+    "input_per_mtok": 0.15,
+    "output_per_mtok": 0.60
+  },
+  {
+    "model": "gpt-4-turbo",
+    "provider": "openai",
+    "input_per_mtok": 10.00,
+    "output_per_mtok": 30.00
+  },
+  {
+    "model": "gpt-4",
+    "provider": "openai",
+    "input_per_mtok": 30.00,
+    "output_per_mtok": 60.00
+  },
+  {
+    "model": "gpt-3.5-turbo",
+    "provider": "openai",
+    "input_per_mtok": 0.50,
+    "output_per_mtok": 1.50
+  },
+  {
+    "model": "o1",
+    "provider": "openai",
+    "input_per_mtok": 15.00,
+    "output_per_mtok": 60.00
+  },
+  {
+    "model": "o1-mini",
+    "provider": "openai",
+    "input_per_mtok": 3.00,
+    "output_per_mtok": 12.00
+  },
+  {
+    "model": "o3-mini",
+    "provider": "openai",
+    "input_per_mtok": 1.10,
+    "output_per_mtok": 4.40
+  },
+  {
+    "model": "claude-opus-4",
+    "provider": "anthropic",
+    "input_per_mtok": 15.00,
+    "output_per_mtok": 75.00
+  },
+  {
+    "model": "claude-sonnet-4",
+    "provider": "anthropic",
+    "input_per_mtok": 3.00,
+    "output_per_mtok": 15.00
+  },
+  {
+    "model": "claude-3.5-sonnet",
+    "provider": "anthropic",
+    "input_per_mtok": 3.00,
+    "output_per_mtok": 15.00
+  },
+  {
+    "model": "claude-3.5-haiku",
+    "provider": "anthropic",
+    "input_per_mtok": 0.80,
+    "output_per_mtok": 4.00
+  },
+  {
+    "model": "claude-3-opus",
+    "provider": "anthropic",
+    "input_per_mtok": 15.00,
+    "output_per_mtok": 75.00
+  },
+  {
+    "model": "claude-3-sonnet",
+    "provider": "anthropic",
+    "input_per_mtok": 3.00,
+    "output_per_mtok": 15.00
+  },
+  {
+    "model": "claude-3-haiku",
+    "provider": "anthropic",
+    "input_per_mtok": 0.25,
+    "output_per_mtok": 1.25
+  },
+  {
+    "model": "gemini-2.0-flash",
+    "provider": "google",
+    "input_per_mtok": 0.10,
+    "output_per_mtok": 0.40
+  },
+  {
+    "model": "gemini-1.5-pro",
+    "provider": "google",
+    "input_per_mtok": 1.25,
+    "output_per_mtok": 5.00
+  },
+  {
+    "model": "gemini-1.5-flash",
+    "provider": "google",
+    "input_per_mtok": 0.075,
+    "output_per_mtok": 0.30
+  }
+]
