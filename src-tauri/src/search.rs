@@ -98,7 +98,7 @@ pub(crate) fn search_jsonl_inner(
 
     // Try indexed search for substring and fts modes
     if mode != "regex" {
-        if let Ok(Some(indexed)) = search_indexed(&file_path, &needle, mode, started) {
+        if let Ok(Some(indexed)) = search_indexed(&file_path, &needle, mode, started, app) {
             return Ok(indexed);
         }
     }
@@ -207,6 +207,7 @@ fn search_indexed(
     query: &str,
     mode: &str,
     started: Instant,
+    app: Option<&AppHandle>,
 ) -> Result<Option<SearchResponse>, String> {
     let conn = open_cache()?;
     // fts mode uses tokenized search, substring uses phrase matching
@@ -235,6 +236,18 @@ fn search_indexed(
         .next()
         .map_err(|err| format!("Failed to read indexed search: {err}"))?
     {
+        if results.len() % 100 == 0 {
+            if let Some(app) = app {
+                let _ = app.emit(
+                    "search-progress",
+                    ProgressEvent {
+                        processed_bytes: results.len() as u64,
+                        total_bytes: 0,
+                        line_number: results.len(),
+                    },
+                );
+            }
+        }
         if results.len() >= MAX_SEARCH_RESULTS {
             return Ok(Some(SearchResponse {
                 results,

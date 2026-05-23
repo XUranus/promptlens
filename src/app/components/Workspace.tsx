@@ -51,7 +51,7 @@ export function ProgressStrip({
       : `Last scan ${formatDuration(lastScanMs)} · last search ${formatDuration(lastSearchMs)}`;
 
   return (
-    <div className="progress-strip">
+    <div className="progress-strip" role="progressbar" aria-valuenow={loading || searching ? percent : 100} aria-valuemin={0} aria-valuemax={100} aria-label={label}>
       <div className="progress-track">
         <div style={{ width: `${loading || searching ? percent : 100}%` }} />
       </div>
@@ -74,10 +74,12 @@ export function WorkspaceTabs({
   onClose: (id: string) => void;
 }) {
   return (
-    <div className="workspace-tabs">
+    <div className="workspace-tabs" role="tablist">
       {tabs.map((tab) => (
         <button
           key={tab.id}
+          role="tab"
+          aria-selected={tab.id === activeTabId}
           className={tab.id === activeTabId ? "active" : ""}
           onClick={() => onActivate(tab.id)}
           title={tab.file.filePath}
@@ -91,6 +93,7 @@ export function WorkspaceTabs({
               event.stopPropagation();
               onClose(tab.id);
             }}
+            aria-label={`Close ${tab.file.fileName}`}
           >
             <X size={13} />
           </strong>

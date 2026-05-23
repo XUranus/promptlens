@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelPricing {
@@ -19,8 +20,10 @@ pub struct CostEstimate {
 
 const PRICING_JSON: &str = include_str!("../pricing.json");
 
-pub fn load_pricing_table() -> Vec<ModelPricing> {
-    serde_json::from_str(PRICING_JSON).unwrap_or_default()
+static PRICING_TABLE: OnceLock<Vec<ModelPricing>> = OnceLock::new();
+
+pub fn load_pricing_table() -> &'static [ModelPricing] {
+    PRICING_TABLE.get_or_init(|| serde_json::from_str(PRICING_JSON).unwrap_or_default())
 }
 
 pub fn find_pricing<'a>(model: &str, table: &'a [ModelPricing]) -> Option<&'a ModelPricing> {

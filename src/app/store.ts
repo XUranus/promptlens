@@ -13,12 +13,7 @@ import type {
   SearchResult,
 } from "../types";
 import {
-  buildAnalytics,
-  buildFilterOptions,
-  buildSessionGroups,
   buildMarkdownReport,
-  compareSummary,
-  detectIssues,
   summariesToCsv,
   summariesToJsonl,
 } from "./analytics";
@@ -78,6 +73,11 @@ import { listen } from "@tauri-apps/api/event";
 
 // ── App Store (UI preferences) ──────────────────────────────────
 
+export type ToastKind = "error" | "success" | "info";
+export interface Toast { id: number; message: string; kind: ToastKind; }
+
+let toastId = 0;
+
 interface AppState {
   theme: Theme;
   settings: AppSettings;
@@ -85,6 +85,7 @@ interface AppState {
   settingsOpen: boolean;
   imagePreview: string | null;
   error: string | null;
+  toasts: Toast[];
   liveMode: boolean;
   openSource: LogSource;
   leftPanelWidth: number;
@@ -108,6 +109,8 @@ interface AppState {
   setSettingsOpen: (v: boolean | ((prev: boolean) => boolean)) => void;
   setImagePreview: (v: string | null) => void;
   setError: (v: string | null) => void;
+  addToast: (message: string, kind?: ToastKind) => void;
+  removeToast: (id: number) => void;
   setLiveMode: (v: boolean | ((prev: boolean) => boolean)) => void;
   setOpenSource: (s: LogSource) => void;
   setLeftPanelWidth: (n: number) => void;
@@ -136,6 +139,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   settingsOpen: false,
   imagePreview: null,
   error: null,
+  toasts: [],
   liveMode: false,
   openSource: "audit",
   leftPanelWidth: loadPanelWidth("left", LEFT_DEFAULT),
@@ -159,6 +163,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSettingsOpen: (v) => set((s) => ({ settingsOpen: typeof v === "function" ? v(s.settingsOpen) : v })),
   setImagePreview: (v) => set({ imagePreview: v }),
   setError: (v) => set({ error: v }),
+  addToast: (message, kind = "info") => {
+    const id = ++toastId;
+    set((s) => ({ toasts: [...s.toasts, { id, message, kind }] }));
+    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), 5000);
+  },
+  removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   setLiveMode: (v) => set((s) => ({ liveMode: typeof v === "function" ? v(s.liveMode) : v })),
   setOpenSource: (s) => set({ openSource: s }),
   setLeftPanelWidth: (n) => set({ leftPanelWidth: n }),
@@ -222,35 +232,6 @@ interface WorkspaceState {
   costEstimates: CostEstimate[];
   rustAnalytics: ComputedAnalytics | null;
 
-  // Derived (computed on read)
-  activeTab: () => WorkspaceTab | null;
-  file: () => FileScanResult | null;
-  selected: () => LogSummary | null;
-  detail: () => import("../types").RecordDetail | null;
-  compareBase: () => import("../types").RecordDetail | null;
-  searchTerm: () => string;
-  searchResults: () => SearchResult[];
-  providerFilter: () => string;
-  modelFilter: () => string;
-  statusFilter: () => string;
-  issueOnly: () => boolean;
-  traceFilter: () => string;
-  lastSearchIndexed: () => boolean | null;
-  agentSession: () => import("../types").AgentSessionResult | null;
-  newLineNumbers: () => number[];
-  lastScanMs: () => number | null;
-  lastSearchMs: () => number | null;
-
-  // Filtered & analytics (recomputed when deps change)
-  filtered: () => LogSummary[];
-  allAnalytics: () => AnalyticsSummary;
-  allIssues: () => IssueRecord[];
-  issueLineSet: () => Set<number>;
-  filterOptions: () => { providers: string[]; models: string[]; traces: string[] };
-  sessions: () => SessionGroup[];
-  analytics: () => AnalyticsSummary;
-  issues: () => IssueRecord[];
-
   // Actions
   setActiveTabId: (id: string | null) => void;
   updateActiveTab: (patch: Partial<WorkspaceTab>) => void;
@@ -268,14 +249,14 @@ interface WorkspaceState {
   handleRescan: () => Promise<void>;
   handleLoadAppendedRecords: () => Promise<void>;
   handleClearCache: () => Promise<void>;
-  handleExport: (kind: "jsonl" | "csv" | "report") => Promise<void>;
-  handleRawExport: (kind: "raw_jsonl" | "normalized_jsonl" | "session_markdown") => Promise<void>;
+  handleExport: (kind: "jsonl" | "csv" | "report", filtered: LogSummary[], analytics: AnalyticsSummary, issues: IssueRecord[], sessions: SessionGroup[]) => Promise<void>;
+  handleRawExport: (kind: "raw_jsonl" | "normalized_jsonl" | "session_markdown", filtered: LogSummary[]) => Promise<void>;
   handleOpenSource: (source: LogSource) => Promise<void>;
   handleTabSwitch: (tabId: string) => void;
   handleCloseTab: (tabId: string) => void;
-  jumpToResult: (result: SearchResult) => Promise<void>;
-  jumpToAgentEvent: (event: AgentEvent) => Promise<void>;
-  moveSelection: (delta: number) => void;
+  jumpToResult: (result: SearchResult, file: FileScanResult | null) => Promise<void>;
+  jumpToAgentEvent: (event: AgentEvent, file: FileScanResult | null) => Promise<void>;
+  moveSelection: (delta: number, filtered: LogSummary[]) => void;
   initWorkspace: () => void;
   startListeners: () => () => void;
 }
@@ -294,62 +275,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   pricingTable: [],
   costEstimates: [],
   rustAnalytics: null,
-
-  activeTab: () => get().tabs.find((t) => t.id === get().activeTabId) ?? null,
-  file: () => get().activeTab()?.file ?? null,
-  selected: () => get().activeTab()?.selected ?? null,
-  detail: () => get().activeTab()?.detail ?? null,
-  compareBase: () => get().activeTab()?.compareBase ?? null,
-  searchTerm: () => get().activeTab()?.searchTerm ?? "",
-  searchResults: () => get().activeTab()?.searchResults ?? [],
-  providerFilter: () => get().activeTab()?.providerFilter ?? "",
-  modelFilter: () => get().activeTab()?.modelFilter ?? "",
-  statusFilter: () => get().activeTab()?.statusFilter ?? "",
-  issueOnly: () => get().activeTab()?.issueOnly ?? false,
-  traceFilter: () => get().activeTab()?.traceFilter ?? "",
-  lastSearchIndexed: () => get().activeTab()?.lastSearchIndexed ?? null,
-  agentSession: () => get().activeTab()?.agentSession ?? null,
-  newLineNumbers: () => get().activeTab()?.newLineNumbers ?? [],
-  lastScanMs: () => get().activeTab()?.lastScanMs ?? null,
-  lastSearchMs: () => get().activeTab()?.lastSearchMs ?? null,
-
-  filtered: () => {
-    const file = get().file();
-    if (!file) return [];
-    const app = useAppStore.getState();
-    const s = get();
-    const q = app.query.trim().toLowerCase();
-    const minLatency = Number(app.latencyMin);
-    const minTokens = Number(app.tokensMin);
-    const issueLineSet = s.issueLineSet();
-    return [...file.summaries]
-      .filter((item) => {
-        if (app.filter === "error" && item.status !== "error" && item.status !== "invalid_json") return false;
-        if (app.filter === "success" && item.status !== "success") return false;
-        if (app.filter === "image" && !item.hasImage) return false;
-        if (app.filter === "tool" && !item.hasToolCall) return false;
-        if (s.providerFilter() && (item.provider || "unknown provider") !== s.providerFilter()) return false;
-        if (s.modelFilter() && (item.model || "unknown model") !== s.modelFilter()) return false;
-        if (s.statusFilter() && item.status !== s.statusFilter()) return false;
-        if (s.traceFilter() && (item.traceId || item.sessionId || "") !== s.traceFilter()) return false;
-        if (s.issueOnly() && !issueLineSet.has(item.lineNumber)) return false;
-        if (app.latencyMin && (!item.latencyMs || item.latencyMs < minLatency)) return false;
-        if (app.tokensMin && (!item.totalTokens || item.totalTokens < minTokens)) return false;
-        if (!q) return true;
-        return [item.model, item.provider, item.preview, item.timestamp, item.status, item.traceId, item.sessionId, item.requestId]
-          .filter(Boolean)
-          .some((value) => String(value).toLowerCase().includes(q));
-      })
-      .sort((a, b) => compareSummary(a, b, app.sortKey));
-  },
-
-  allAnalytics: () => buildAnalytics(get().file()?.summaries ?? []),
-  allIssues: () => detectIssues(get().file()?.summaries ?? [], get().allAnalytics()),
-  issueLineSet: () => new Set(get().allIssues().map((i) => i.summary.lineNumber)),
-  filterOptions: () => get().rustAnalytics?.filterOptions ?? buildFilterOptions(get().file()?.summaries ?? []),
-  sessions: () => buildSessionGroups(get().file()?.summaries ?? []),
-  analytics: () => buildAnalytics(get().filtered()),
-  issues: () => detectIssues(get().filtered(), get().analytics()),
 
   setActiveTabId: (id) => set({ activeTabId: id }),
   updateActiveTab: (patch) =>
@@ -410,13 +335,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   handleSelect: async (summary) => {
-    const file = get().file();
+    const tab = get().tabs.find((t) => t.id === get().activeTabId);
+    const file = tab?.file ?? null;
     if (!file) return;
     useAppStore.getState().setSelectedAgentEvent(null);
     get().updateActiveTab({
       selected: summary,
       detail: null,
-      newLineNumbers: get().newLineNumbers().filter((n) => n !== summary.lineNumber),
+      newLineNumbers: (tab?.newLineNumbers ?? []).filter((n) => n !== summary.lineNumber),
     });
     try {
       get().updateActiveTab({ detail: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
@@ -426,7 +352,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   handleSetCompare: async (summary) => {
-    const file = get().file();
+    const file = get().tabs.find((t) => t.id === get().activeTabId)?.file ?? null;
     if (!file) return;
     try {
       get().updateActiveTab({ compareBase: await readRecord(file.filePath, summary.byteOffset, summary.lineNumber) });
@@ -437,8 +363,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   handleSearch: async (mode = "substring") => {
-    const file = get().file();
-    const term = get().searchTerm();
+    const tab = get().tabs.find((t) => t.id === get().activeTabId);
+    const file = tab?.file ?? null;
+    const term = tab?.searchTerm ?? "";
     if (!file || !term.trim()) return;
     set({ searching: true, searchProgress: null });
     get().updateActiveTab({ lastSearchMs: null, lastSearchIndexed: null });
@@ -460,14 +387,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   handleRescan: async () => {
-    const file = get().file();
-    const tab = get().activeTab();
+    const tab = get().tabs.find((t) => t.id === get().activeTabId);
+    const file = tab?.file ?? null;
     if (!file || !tab) return;
     await get().loadFile(file.filePath, { source: tab.source });
   },
 
   handleLoadAppendedRecords: async () => {
-    const file = get().file();
+    const tab = get().tabs.find((t) => t.id === get().activeTabId);
+    const file = tab?.file ?? null;
     if (!file) return;
     const app = useAppStore.getState();
     set({ loading: true, scanProgress: null });
@@ -475,8 +403,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     try {
       const result = await scanJsonlIncremental(file.filePath, file.fileSize, file.totalLines);
       const appendedLines = result.summaries.map((s) => s.lineNumber);
-      const nextAgentSession = await readAgentSession(file.filePath, get().activeTab()?.source ?? "audit").catch(
-        () => get().agentSession(),
+      const nextAgentSession = await readAgentSession(file.filePath, tab?.source ?? "audit").catch(
+        () => tab?.agentSession ?? null,
       );
       get().updateActiveTab({
         file: {
@@ -492,7 +420,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         },
         lastScanMs: result.durationMs,
         agentSession: nextAgentSession,
-        newLineNumbers: [...get().newLineNumbers(), ...appendedLines],
+        newLineNumbers: [...(tab?.newLineNumbers ?? []), ...appendedLines],
       });
       set({ fileStatus: { exists: true, fileSize: result.fileSize, modified: result.modified } });
     } catch (err) {
@@ -511,15 +439,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }));
   },
 
-  handleExport: async (kind) => {
-    const file = get().file();
+  handleExport: async (kind, filtered, analytics, issues, sessions) => {
+    const file = get().tabs.find((t) => t.id === get().activeTabId)?.file ?? null;
     if (!file) return;
     const app = useAppStore.getState();
     try {
-      const filtered = get().filtered();
-      const analytics = get().analytics();
-      const issues = get().issues();
-      const sessions = get().sessions();
       const baseName = file.fileName.replace(/\.[^.]+$/, "");
       const payload =
         kind === "jsonl"
@@ -529,18 +453,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             : buildMarkdownReport(file, filtered, analytics, issues, sessions);
       const extension = kind === "report" ? "md" : kind;
       const saved = await saveTextFile(`${baseName}-${kind}.${extension}`, payload);
-      if (saved) app.setError(`Saved ${saved}`);
+      if (saved) app.addToast(`Saved ${saved}`, "success");
     } catch (err) {
       app.setError(err instanceof Error ? err.message : String(err));
     }
   },
 
-  handleRawExport: async (kind) => {
-    const file = get().file();
+  handleRawExport: async (kind, filtered) => {
+    const file = get().tabs.find((t) => t.id === get().activeTabId)?.file ?? null;
     if (!file) return;
     const app = useAppStore.getState();
     try {
-      const filtered = get().filtered();
       const baseName = file.fileName.replace(/\.[^.]+$/, "");
       const extension = kind === "session_markdown" ? "md" : "jsonl";
       const saved = await exportRecords(
@@ -549,7 +472,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         kind,
         `${baseName}-${kind}.${extension}`,
       );
-      if (saved) app.setError(`Saved ${saved}`);
+      if (saved) app.addToast(`Saved ${saved}`, "success");
     } catch (err) {
       app.setError(err instanceof Error ? err.message : String(err));
     }
@@ -581,8 +504,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     });
   },
 
-  jumpToResult: async (result) => {
-    const file = get().file();
+  jumpToResult: async (result, file) => {
     if (!file) return;
     useAppStore.getState().setSelectedAgentEvent(null);
     const summary =
@@ -597,19 +519,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     await get().handleSelect(summary);
   },
 
-  jumpToAgentEvent: async (event) => {
+  jumpToAgentEvent: async (event, file) => {
     useAppStore.getState().setSelectedAgentEvent(event);
     await get().jumpToResult({
       lineNumber: event.lineNumber,
       byteOffset: event.byteOffset,
       context: event.preview ?? event.eventType,
-    });
+    }, file);
     useAppStore.getState().setSelectedAgentEvent(event);
   },
 
-  moveSelection: (delta) => {
-    const selected = get().selected();
-    const filtered = get().filtered();
+  moveSelection: (delta, filtered) => {
+    const tab = get().tabs.find((t) => t.id === get().activeTabId);
+    const selected = tab?.selected ?? null;
     if (!selected || filtered.length === 0) return;
     const index = filtered.findIndex((item) => item.id === selected.id);
     const next = filtered[Math.max(0, Math.min(filtered.length - 1, index + delta))];

@@ -6,6 +6,10 @@
   position: relative;
   z-index: 260;
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--danger-border);
   color: var(--danger-text);
@@ -13,6 +17,20 @@
   font-size: 12px;
   backdrop-filter: var(--blur-sm);
   -webkit-backdrop-filter: var(--blur-sm);
+}
+
+.error-banner button {
+  background: none;
+  border: none;
+  color: var(--danger-text);
+  opacity: 0.7;
+  cursor: pointer;
+  padding: 2px;
+  flex-shrink: 0;
+}
+
+.error-banner button:hover {
+  opacity: 1;
 }
 
 .warning-banner {

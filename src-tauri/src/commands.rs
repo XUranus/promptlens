@@ -319,7 +319,7 @@ fn scan_jsonl_incremental(
 
 #[tauri::command]
 fn get_pricing_table() -> Vec<crate::pricing::ModelPricing> {
-    crate::pricing::load_pricing_table()
+    crate::pricing::load_pricing_table().to_vec()
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

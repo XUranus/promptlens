@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   AlertTriangle,
@@ -114,12 +114,6 @@ export function LeftPanel({
   const orderedIssues = useMemo(() => orderIssues(issues, sortOrder), [issues, sortOrder]);
   const orderedSearchResults = useMemo(() => orderSearchResults(searchResults, sortOrder), [searchResults, sortOrder]);
   const costMap = useMemo(() => {
-    const map = new Map<number, CostEstimate>();
-    for (const estimate of costEstimates) {
-      const line = filtered.find((item) => item.model === estimate.model && !map.has(item.lineNumber))?.lineNumber;
-      if (line !== undefined) map.set(line, estimate);
-    }
-    // Build by index alignment (costEstimates aligns with filtered)
     const aligned = new Map<number, CostEstimate>();
     for (let i = 0; i < Math.min(filtered.length, costEstimates.length); i++) {
       aligned.set(filtered[i].lineNumber, costEstimates[i]);
@@ -131,32 +125,32 @@ export function LeftPanel({
   return (
     <div className="left-panel">
       <FileHeader file={file} count={records.length} />
-      <div className="left-tabs">
-        <button className={tab === "records" ? "active" : ""} onClick={() => setTab("records")} title="Records">
+      <div className="left-tabs" role="tablist">
+        <button role="tab" aria-selected={tab === "records"} className={tab === "records" ? "active" : ""} onClick={() => setTab("records")} title="Records">
           <FileText size={14} />
         </button>
-        <button className={tab === "timeline" ? "active" : ""} onClick={() => setTab("timeline")} title="Agent Timeline">
+        <button role="tab" aria-selected={tab === "timeline"} className={tab === "timeline" ? "active" : ""} onClick={() => setTab("timeline")} title="Agent Timeline">
           <Terminal size={14} />
         </button>
-        <button className={tab === "subagents" ? "active" : ""} onClick={() => setTab("subagents")} title="Subagents">
+        <button role="tab" aria-selected={tab === "subagents"} className={tab === "subagents" ? "active" : ""} onClick={() => setTab("subagents")} title="Subagents">
           <Bot size={14} />
         </button>
-        <button className={tab === "agentFiles" ? "active" : ""} onClick={() => setTab("agentFiles")} title="Agent Files">
+        <button role="tab" aria-selected={tab === "agentFiles"} className={tab === "agentFiles" ? "active" : ""} onClick={() => setTab("agentFiles")} title="Agent Files">
           <FileText size={14} />
         </button>
-        <button className={tab === "trace" ? "active" : ""} onClick={() => setTab("trace")} title="Trace">
+        <button role="tab" aria-selected={tab === "trace"} className={tab === "trace" ? "active" : ""} onClick={() => setTab("trace")} title="Trace">
           <Network size={14} />
         </button>
-        <button className={tab === "sessions" ? "active" : ""} onClick={() => setTab("sessions")} title="Sessions">
+        <button role="tab" aria-selected={tab === "sessions"} className={tab === "sessions" ? "active" : ""} onClick={() => setTab("sessions")} title="Sessions">
           <Users size={14} />
         </button>
-        <button className={tab === "analytics" ? "active" : ""} onClick={() => setTab("analytics")} title="Analytics">
+        <button role="tab" aria-selected={tab === "analytics"} className={tab === "analytics" ? "active" : ""} onClick={() => setTab("analytics")} title="Analytics">
           <BarChart3 size={14} />
         </button>
-        <button className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")} title="Issues">
+        <button role="tab" aria-selected={tab === "issues"} className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")} title="Issues">
           <AlertTriangle size={14} />
         </button>
-        <button className={tab === "search" ? "active" : ""} onClick={() => setTab("search")} title="Search">
+        <button role="tab" aria-selected={tab === "search"} className={tab === "search" ? "active" : ""} onClick={() => setTab("search")} title="Search">
           <Search size={14} />
         </button>
       </div>
@@ -208,7 +202,7 @@ export function LeftPanel({
   );
 }
 
-function FileHeader({ file, count }: { file: FileScanResult | null; count: number }) {
+const FileHeader = memo(function FileHeader({ file, count }: { file: FileScanResult | null; count: number }) {
   if (!file) return <div className="file-header muted">No file loaded</div>;
   return (
     <div className="file-header">
@@ -221,7 +215,7 @@ function FileHeader({ file, count }: { file: FileScanResult | null; count: numbe
       </div>
     </div>
   );
-}
+});
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -267,6 +261,7 @@ function LogList({
           return (
             <button
               key={`${item.id}-${item.lineNumber}`}
+              aria-current={selected?.lineNumber === item.lineNumber ? "true" : undefined}
               className={`log-row ${selected?.lineNumber === item.lineNumber ? "selected" : ""} ${isNew ? "new-record" : ""}`}
               onClick={() => onSelect(item)}
               style={{ transform: `translateY(${virtualRow.start}px)` }}
@@ -323,9 +318,10 @@ function TraceView({
   onTraceFilter: (trace: string) => void;
 }) {
   const [traceQuery, setTraceQuery] = useState("");
+  const [showAllTraces, setShowAllTraces] = useState(false);
   if (!file) return <div className="empty-state">Open a file to inspect traces.</div>;
   const query = traceQuery.trim().toLowerCase();
-  const allGrouped = traces
+  const allGrouped = useMemo(() => traces
     .map((trace) => ({
       trace,
       records: orderSummaries(
@@ -337,7 +333,7 @@ function TraceView({
       const aRecord = a.records[0];
       const bRecord = b.records[0];
       return orderFactor(sortOrder) * ((aRecord?.lineNumber ?? 0) - (bRecord?.lineNumber ?? 0));
-    });
+    }), [traces, file, sortOrder]);
   const grouped = allGrouped.filter(({ trace, records }) => {
     if (!query) return true;
     return [
@@ -361,7 +357,7 @@ function TraceView({
       </div>
       {!grouped.length ? <div className="empty-state compact">No traces match the current filter.</div> : null}
       <div className="trace-list">
-        {grouped.slice(0, 100).map(({ trace, records }) => (
+        {(showAllTraces ? grouped : grouped.slice(0, 100)).map(({ trace, records }) => (
           <div key={trace} className={`trace-card${records.some((record) => isSameLine(record, selected)) ? " active" : ""}`}>
             <div className="trace-head">
               <strong>{trace}</strong>
@@ -383,6 +379,11 @@ function TraceView({
           </div>
         ))}
       </div>
+      {!showAllTraces && grouped.length > 100 ? (
+        <button className="show-more-btn" onClick={() => setShowAllTraces(true)}>
+          Show all {grouped.length.toLocaleString()} traces
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -609,7 +610,7 @@ function SubagentsView({
 }) {
   const listRef = useRef<HTMLDivElement | null>(null);
   const [subagentQuery, setSubagentQuery] = useState("");
-  const allTasks = session ? buildSubagentTasks(session.events) : [];
+  const allTasks = useMemo(() => session ? buildSubagentTasks(session.events) : [], [session]);
   const query = subagentQuery.trim().toLowerCase();
   const tasks = allTasks.filter((task) => {
     if (!query) return true;
@@ -813,14 +814,14 @@ function AnalyticsView({
   );
 }
 
-function MetricTile({ label, value }: { label: string; value: string }) {
+const MetricTile = memo(function MetricTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="metric-tile">
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
   );
-}
+});
 
 
 
@@ -882,14 +883,14 @@ function MetadataContent({
   );
 }
 
-function KV({ label, value }: { label: string; value: unknown }) {
+const KV = memo(function KV({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="kv-row">
       <span>{label}</span>
       <strong title={String(value)}>{String(value)}</strong>
     </div>
   );
-}
+});
 
 function IssuesView({
   issues,
@@ -900,7 +901,9 @@ function IssuesView({
   selected: import("../../types").LogSummary | null;
   onJump: (result: SearchResult) => void;
 }) {
+  const [showAll, setShowAll] = useState(false);
   if (!issues.length) return <div className="empty-state">No obvious issues in the current filter.</div>;
+  const visible = showAll ? issues : issues.slice(0, 300);
   return (
     <div className="debug-view">
       <div className="section-head">
@@ -908,7 +911,7 @@ function IssuesView({
         <span>{issues.length.toLocaleString()} records</span>
       </div>
       <div className="issue-list">
-        {issues.slice(0, 300).map((issue) => (
+        {visible.map((issue) => (
           <button
             key={`${issue.kind}-${issue.summary.lineNumber}`}
             className={`issue-card ${issue.severity}${isSameLine(issue.summary, selected) ? " active" : ""}`}
@@ -928,6 +931,11 @@ function IssuesView({
           </button>
         ))}
       </div>
+      {!showAll && issues.length > 300 ? (
+        <button className="show-more-btn" onClick={() => setShowAll(true)}>
+          Show all {issues.length.toLocaleString()} issues
+        </button>
+      ) : null}
     </div>
   );
 }

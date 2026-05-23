@@ -105,6 +105,18 @@ pub(crate) fn scan_jsonl_inner(
         }
     }
 
+    // Emit final progress so UI always shows completion
+    if let Some(app) = app {
+        let _ = app.emit(
+            "scan-progress",
+            ProgressEvent {
+                processed_bytes: metadata.len(),
+                total_bytes: metadata.len(),
+                line_number: total_lines,
+            },
+        );
+    }
+
     let result = FileScanResult {
         file_path,
         file_name,

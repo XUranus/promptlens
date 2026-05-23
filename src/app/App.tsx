@@ -1,6 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Search, Filter as FilterIcon, X } from "lucide-react";
 import type { CSSProperties } from "react";
 import { copyJson } from "../lib/clipboard";
@@ -11,22 +10,29 @@ import { ProgressStrip, WorkspaceTabs } from "./components/Workspace";
 import { LeftPanel } from "./components/LeftPanel";
 import { RightPanel } from "./components/RightPanel";
 import { DetailView } from "./components/CenterPanel";
+import { ToastContainer } from "./components/Toast";
 import { useAppStore, useWorkspaceStore, markWorkspaceRestored } from "./store";
 import type { Filter, SortKey } from "./types";
 import { LEFT_MAX, LEFT_MIN, CENTER_MIN, RIGHT_MIN, RIGHT_MAX_RATIO } from "./types";
 import { maxRightPanelWidth } from "./storage";
-
-const appWindow = getCurrentWindow();
+import {
+  buildAnalytics,
+  buildFilterOptions,
+  buildSessionGroups,
+  compareSummary,
+  detectIssues,
+} from "./analytics";
 
 export function App() {
   const workspaceRef = useRef<HTMLDivElement | null>(null);
 
-  // App store selectors
+  // App store selectors (all primitive/stable references - no infinite loop)
   const theme = useAppStore((s) => s.theme);
   const settings = useAppStore((s) => s.settings);
   const settingsOpen = useAppStore((s) => s.settingsOpen);
   const imagePreview = useAppStore((s) => s.imagePreview);
   const error = useAppStore((s) => s.error);
+  const toasts = useAppStore((s) => s.toasts);
   const liveMode = useAppStore((s) => s.liveMode);
   const openSource = useAppStore((s) => s.openSource);
   const leftPanelWidth = useAppStore((s) => s.leftPanelWidth);
@@ -45,7 +51,7 @@ export function App() {
   const tabSwitching = useAppStore((s) => s.tabSwitching);
   const messageViewMode = useAppStore((s) => s.messageViewMode);
 
-  // Workspace store selectors
+  // Workspace store selectors (all primitive/stable references)
   const tabs = useWorkspaceStore((s) => s.tabs);
   const activeTabId = useWorkspaceStore((s) => s.activeTabId);
   const recentFiles = useWorkspaceStore((s) => s.recentFiles);
@@ -60,31 +66,60 @@ export function App() {
   const costEstimates = useWorkspaceStore((s) => s.costEstimates);
   const rustAnalytics = useWorkspaceStore((s) => s.rustAnalytics);
 
-  // Derived from workspace
-  const activeTab = useWorkspaceStore((s) => s.activeTab());
-  const file = useWorkspaceStore((s) => s.file());
-  const selected = useWorkspaceStore((s) => s.selected());
-  const detail = useWorkspaceStore((s) => s.detail());
-  const compareBase = useWorkspaceStore((s) => s.compareBase());
-  const searchTerm = useWorkspaceStore((s) => s.searchTerm());
-  const searchResults = useWorkspaceStore((s) => s.searchResults());
-  const providerFilter = useWorkspaceStore((s) => s.providerFilter());
-  const modelFilter = useWorkspaceStore((s) => s.modelFilter());
-  const statusFilter = useWorkspaceStore((s) => s.statusFilter());
-  const issueOnly = useWorkspaceStore((s) => s.issueOnly());
-  const traceFilter = useWorkspaceStore((s) => s.traceFilter());
-  const lastSearchIndexed = useWorkspaceStore((s) => s.lastSearchIndexed());
-  const agentSession = useWorkspaceStore((s) => s.agentSession());
-  const newLineNumbers = useWorkspaceStore((s) => s.newLineNumbers());
-  const lastScanMs = useWorkspaceStore((s) => s.lastScanMs());
-  const lastSearchMs = useWorkspaceStore((s) => s.lastSearchMs());
-  const filtered = useWorkspaceStore((s) => s.filtered());
-  const allAnalytics = useWorkspaceStore((s) => s.allAnalytics());
-  const allIssues = useWorkspaceStore((s) => s.allIssues());
-  const filterOptions = useWorkspaceStore((s) => s.filterOptions());
-  const sessions = useWorkspaceStore((s) => s.sessions());
-  const analytics = useWorkspaceStore((s) => s.analytics());
-  const issues = useWorkspaceStore((s) => s.issues());
+  // Derived values via useMemo (stable references when deps don't change)
+  const activeTab = useMemo(() => tabs.find((t) => t.id === activeTabId) ?? null, [tabs, activeTabId]);
+  const file = useMemo(() => activeTab?.file ?? null, [activeTab]);
+  const selected = useMemo(() => activeTab?.selected ?? null, [activeTab]);
+  const detail = useMemo(() => activeTab?.detail ?? null, [activeTab]);
+  const compareBase = useMemo(() => activeTab?.compareBase ?? null, [activeTab]);
+  const searchTerm = useMemo(() => activeTab?.searchTerm ?? "", [activeTab]);
+  const searchResults = useMemo(() => activeTab?.searchResults ?? [], [activeTab]);
+  const providerFilter = useMemo(() => activeTab?.providerFilter ?? "", [activeTab]);
+  const modelFilter = useMemo(() => activeTab?.modelFilter ?? "", [activeTab]);
+  const statusFilter = useMemo(() => activeTab?.statusFilter ?? "", [activeTab]);
+  const issueOnly = useMemo(() => activeTab?.issueOnly ?? false, [activeTab]);
+  const traceFilter = useMemo(() => activeTab?.traceFilter ?? "", [activeTab]);
+  const lastSearchIndexed = useMemo(() => activeTab?.lastSearchIndexed ?? null, [activeTab]);
+  const agentSession = useMemo(() => activeTab?.agentSession ?? null, [activeTab]);
+  const newLineNumbers = useMemo(() => activeTab?.newLineNumbers ?? [], [activeTab]);
+  const lastScanMs = useMemo(() => activeTab?.lastScanMs ?? null, [activeTab]);
+  const lastSearchMs = useMemo(() => activeTab?.lastSearchMs ?? null, [activeTab]);
+
+  // Expensive derived computations
+  const allAnalytics = useMemo(() => buildAnalytics(file?.summaries ?? []), [file]);
+  const allIssues = useMemo(() => detectIssues(file?.summaries ?? [], allAnalytics), [file, allAnalytics]);
+  const issueLineSet = useMemo(() => new Set(allIssues.map((i) => i.summary.lineNumber)), [allIssues]);
+  const filterOptions = useMemo(() => rustAnalytics?.filterOptions ?? buildFilterOptions(file?.summaries ?? []), [rustAnalytics, file]);
+  const sessions = useMemo(() => buildSessionGroups(file?.summaries ?? []), [file]);
+
+  const filtered = useMemo(() => {
+    if (!file) return [];
+    const q = query.trim().toLowerCase();
+    const minLatency = Number(latencyMin);
+    const minTokens = Number(tokensMin);
+    return [...file.summaries]
+      .filter((item) => {
+        if (filter === "error" && item.status !== "error" && item.status !== "invalid_json") return false;
+        if (filter === "success" && item.status !== "success") return false;
+        if (filter === "image" && !item.hasImage) return false;
+        if (filter === "tool" && !item.hasToolCall) return false;
+        if (providerFilter && (item.provider || "unknown provider") !== providerFilter) return false;
+        if (modelFilter && (item.model || "unknown model") !== modelFilter) return false;
+        if (statusFilter && item.status !== statusFilter) return false;
+        if (traceFilter && (item.traceId || item.sessionId || "") !== traceFilter) return false;
+        if (issueOnly && !issueLineSet.has(item.lineNumber)) return false;
+        if (latencyMin && (!item.latencyMs || item.latencyMs < minLatency)) return false;
+        if (tokensMin && (!item.totalTokens || item.totalTokens < minTokens)) return false;
+        if (!q) return true;
+        return [item.model, item.provider, item.preview, item.timestamp, item.status, item.traceId, item.sessionId, item.requestId]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(q));
+      })
+      .sort((a, b) => compareSummary(a, b, sortKey));
+  }, [file, filter, sortKey, query, latencyMin, tokensMin, providerFilter, modelFilter, statusFilter, traceFilter, issueOnly, issueLineSet]);
+
+  const analytics = useMemo(() => buildAnalytics(filtered), [filtered]);
+  const issues = useMemo(() => detectIssues(filtered, analytics), [filtered, analytics]);
 
   // Actions
   const ws = useWorkspaceStore.getState;
@@ -150,19 +185,24 @@ export function App() {
       }
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        ws().moveSelection(1);
+        ws().moveSelection(1, filtered);
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        ws().moveSelection(-1);
+        ws().moveSelection(-1, filtered);
       }
       if (event.key === "Escape") {
         app().setImagePreview(null);
       }
+      if (mod && event.key.toLowerCase() === "w") {
+        event.preventDefault();
+        const activeId = useWorkspaceStore.getState().activeTabId;
+        if (activeId) ws().handleCloseTab(activeId);
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  });
+  }, [openSource, detail, filtered]);
 
   // Live mode
   useEffect(() => {
@@ -189,14 +229,15 @@ export function App() {
 
   // Cost estimates
   useEffect(() => {
+    if (!file) { ws().setCostEstimates([]); return; }
     calculateCosts(
-      filtered.map((item) => ({
+      file.summaries.map((item) => ({
         model: item.model || "",
         prompt_tokens: item.promptTokens,
         completion_tokens: item.completionTokens,
       })),
     ).then((c) => ws().setCostEstimates(c)).catch(() => ws().setCostEstimates([]));
-  }, [filtered, pricingTable]);
+  }, [file?.filePath, file?.fileSize, pricingTable]);
 
   // File status polling
   useEffect(() => {
@@ -373,8 +414,8 @@ export function App() {
         onOpenRecent={(path) => void ws().loadFile(path, { source: openSource })}
         onRescan={() => void ws().handleRescan()}
         onClearCache={() => void ws().handleClearCache()}
-        onExport={ws().handleExport}
-        onRawExport={ws().handleRawExport}
+        onExport={(kind) => void ws().handleExport(kind, filtered, analytics, issues, sessions)}
+        onRawExport={(kind) => void ws().handleRawExport(kind, filtered)}
       />
       <header className="toolbar">
         <div className="search-box">
@@ -439,9 +480,16 @@ export function App() {
         </button>
       </header>
 
-      {error ? <div className="error-banner">{error}</div> : null}
+      {error ? (
+        <div className="error-banner" role="alert">
+          <span>{error}</span>
+          <button onClick={() => app().setError(null)} aria-label="Dismiss error">
+            <X size={14} />
+          </button>
+        </div>
+      ) : null}
       {hasDiskChange ? (
-        <div className="warning-banner">
+        <div className="warning-banner" role="alert">
           <span>
             {hasAppendOnlyChange
               ? "Active file has appended records on disk."
@@ -502,8 +550,8 @@ export function App() {
             onSearch={() => void ws().handleSearch()}
             onSelect={(s) => void ws().handleSelect(s)}
             onCompare={(s) => void ws().handleSetCompare(s)}
-            onJump={(r) => void ws().jumpToResult(r)}
-            onAgentEventSelect={(e) => void ws().jumpToAgentEvent(e)}
+            onJump={(r) => void ws().jumpToResult(r, file)}
+            onAgentEventSelect={(e) => void ws().jumpToAgentEvent(e, file)}
             onTraceFilter={(trace) => ws().updateActiveTab({ traceFilter: trace, issueOnly: false })}
           />
         </aside>
@@ -543,13 +591,15 @@ export function App() {
       )}
 
       {imagePreview ? (
-        <div className="image-modal" onClick={() => app().setImagePreview(null)}>
-          <button className="modal-close" onClick={() => app().setImagePreview(null)}>
+        <div className="image-modal" role="dialog" aria-modal="true" aria-label="Image preview" onClick={() => app().setImagePreview(null)}>
+          <button className="modal-close" onClick={() => app().setImagePreview(null)} aria-label="Close image preview">
             <X size={18} />
           </button>
           <img src={imagePreview} alt="Expanded embedded prompt content" />
         </div>
       ) : null}
+
+      <ToastContainer toasts={toasts} onDismiss={(id) => app().removeToast(id)} />
     </main>
     </>
   );
