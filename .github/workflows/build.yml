@@ -22,7 +22,7 @@ jobs:
             label: macOS-arm64
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            bundles: deb,rpm
+            bundles: deb,rpm,appimage
             label: Linux-x64
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
