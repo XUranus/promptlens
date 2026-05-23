@@ -88,7 +88,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "PromptLens ${{ github.ref_name }}"
           releaseBody: "See the assets below for platform-specific installers."
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
 
