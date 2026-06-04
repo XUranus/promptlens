@@ -163,22 +163,22 @@
 }
 
 .json-token-key {
-  color: #7cc4f7;
+  color: var(--json-key);
 }
 
 .json-token-string,
 .json-string {
-  color: #9bd88f;
+  color: var(--json-string);
 }
 
 .json-token-number,
 .json-number {
-  color: #f8c77e;
+  color: var(--json-number);
 }
 
 .json-token-boolean,
 .json-boolean {
-  color: #c69cff;
+  color: var(--json-boolean);
 }
 
 .json-token-null,
