@@ -17,6 +17,15 @@ use std::{
 };
 use tauri::{AppHandle, State};
 
+/// (events, subagent_calls, sessions, final_line_number, final_byte_offset)
+type ReadEventsResult = (
+    Vec<AgentEvent>,
+    HashMap<String, AgentEvent>,
+    HashSet<String>,
+    usize,
+    u64,
+);
+
 #[tauri::command]
 fn open_file_dialog() -> Option<String> {
     rfd::FileDialog::new()
@@ -254,16 +263,7 @@ fn read_agent_events(
     source: LogSource,
     initial_line_number: usize,
     initial_byte_offset: u64,
-) -> Result<
-    (
-        Vec<AgentEvent>,
-        HashMap<String, AgentEvent>,
-        HashSet<String>,
-        usize,
-        u64,
-    ),
-    String,
-> {
+) -> Result<ReadEventsResult, String> {
     let mut line = String::new();
     let mut line_number = initial_line_number;
     let mut byte_offset = initial_byte_offset;
@@ -365,7 +365,7 @@ fn load_subagent_sessions(
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.extension().is_some_and(|ext| ext == "jsonl") {
+        if path.extension().is_none_or(|ext| ext != "jsonl") {
             continue;
         }
 
@@ -545,7 +545,7 @@ fn calculate_costs(requests: Vec<CostRequest>) -> Vec<crate::pricing::CostEstima
     requests
         .iter()
         .map(|r| {
-            crate::pricing::calculate_cost(&r.model, r.prompt_tokens, r.completion_tokens, &table)
+            crate::pricing::calculate_cost(&r.model, r.prompt_tokens, r.completion_tokens, table)
         })
         .collect()
 }

@@ -69,7 +69,7 @@ pub struct ComputedAnalytics {
     pub filter_options: FilterOptions,
 }
 
-fn percentile(values: &mut Vec<f64>, quantile: f64) -> Option<f64> {
+fn percentile(values: &mut [f64], quantile: f64) -> Option<f64> {
     if values.is_empty() {
         return None;
     }
@@ -124,11 +124,7 @@ pub fn compute_analytics(summaries: &[LogSummary]) -> AnalyticsSummary {
         error_rate,
         p95_latency: percentile(&mut latencies, 0.95),
         p99_latency: percentile(&mut latencies, 0.99),
-        total_tokens: summaries
-            .iter()
-            .filter_map(|s| s.total_tokens)
-            .map(|t| t as u64)
-            .sum(),
+        total_tokens: summaries.iter().filter_map(|s| s.total_tokens).sum(),
         p95_tokens: percentile(&mut token_values, 0.95).map(|v| v as u64),
         top_models: top_counts(
             &summaries
@@ -245,7 +241,7 @@ pub fn compute_session_groups(summaries: &[LogSummary]) -> Vec<SessionGroup> {
         let time = item
             .timestamp
             .as_deref()
-            .and_then(|t| chrono_parse_ms(t))
+            .and_then(chrono_parse_ms)
             .unwrap_or(0);
         let bucket = if time > 0 {
             time / (5 * 60 * 1000)
@@ -294,11 +290,7 @@ pub fn compute_session_groups(summaries: &[LogSummary]) -> Vec<SessionGroup> {
                 .iter()
                 .filter(|r| r.status == "error" || r.status == "invalid_json")
                 .count();
-            let total_tokens: u64 = sorted
-                .iter()
-                .filter_map(|r| r.total_tokens)
-                .map(|t| t as u64)
-                .sum();
+            let total_tokens: u64 = sorted.iter().filter_map(|r| r.total_tokens).sum();
             let avg_latency = if latencies.is_empty() {
                 None
             } else {

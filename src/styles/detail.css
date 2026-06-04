@@ -48,12 +48,6 @@
   -webkit-backdrop-filter: var(--blur-sm);
   box-shadow: var(--glass-shadow), var(--glass-highlight);
   overflow: hidden;
-  transition: box-shadow 200ms var(--ease), border-color 200ms var(--ease);
-}
-
-.message-card:hover {
-  box-shadow: var(--glass-shadow-lg), var(--glass-highlight);
-  border-color: var(--glass-border-strong);
 }
 
 .message-role {
@@ -212,4 +206,117 @@
 .error-card p {
   margin: 5px 0 0;
   font-size: 12px;
+}
+
+/* ============================================================
+   Tool Call / Result Cards
+   ============================================================ */
+
+.tool-call-card {
+  margin: 4px 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tool-call-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--accent-bg);
+}
+
+.tool-call-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.tool-call-args {
+  padding: 6px 10px;
+}
+
+.tool-call-kv {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.tool-call-key {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
+.tool-call-value {
+  color: var(--text-primary);
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+}
+
+.tool-call-raw {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tool-result-card {
+  margin: 4px 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tool-result-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  background: var(--glass-bg-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 150ms var(--ease);
+}
+
+.tool-result-header:hover {
+  background: var(--glass-bg-hover);
+}
+
+.tool-result-label {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.tool-result-preview {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.tool-result-body {
+  margin: 0;
+  padding: 10px;
+  border-top: 1px solid var(--glass-border);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 400px;
+  overflow: auto;
 }

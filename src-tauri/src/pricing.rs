@@ -38,7 +38,7 @@ pub fn find_pricing<'a>(model: &str, table: &'a [ModelPricing]) -> Option<&'a Mo
         let p_lower = p.model.to_lowercase();
         if lower.contains(&p_lower) {
             let len = p_lower.len();
-            if best.map_or(true, |(_, blen)| len > blen) {
+            if best.is_none_or(|(_, blen)| len > blen) {
                 best = Some((p, len));
             }
         }

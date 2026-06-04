@@ -139,7 +139,7 @@ pub(crate) fn search_jsonl_inner(
         line_number += 1;
         let current_offset = byte_offset;
         byte_offset += bytes_read as u64;
-        if line_number == 1 || line_number % 250 == 0 {
+        if line_number == 1 || line_number.is_multiple_of(250) {
             if let Some(app) = app {
                 let _ = app.emit(
                     "search-progress",

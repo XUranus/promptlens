@@ -63,7 +63,7 @@ pub(crate) fn scan_jsonl_inner(
         let current_offset = byte_offset;
         byte_offset += bytes_read as u64;
 
-        if total_lines == 1 || total_lines % 250 == 0 {
+        if total_lines == 1 || total_lines.is_multiple_of(250) {
             if let Some(app) = app {
                 let _ = app.emit(
                     "scan-progress",
@@ -97,13 +97,13 @@ pub(crate) fn scan_jsonl_inner(
         }
 
         // Emit scan-chunk every 500 lines
-        if total_lines % 500 == 0 && !chunk_buffer.is_empty() {
+        if total_lines.is_multiple_of(500) && !chunk_buffer.is_empty() {
             if let Some(app) = app {
                 let _ = app.emit(
                     "scan-chunk",
                     ScanChunkPayload {
                         file_path: file_path.clone(),
-                        summaries: chunk_buffer.drain(..).collect(),
+                        summaries: std::mem::take(&mut chunk_buffer),
                         line_from: chunk_start_line,
                         line_to: total_lines,
                     },

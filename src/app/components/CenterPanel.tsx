@@ -1,5 +1,5 @@
-import { memo, type JSX } from "react";
-import { CheckCircle, XCircle, AlertTriangle, HelpCircle, Copy } from "lucide-react";
+import { memo, useState, type JSX } from "react";
+import { CheckCircle, XCircle, AlertTriangle, HelpCircle, Copy, Wrench, ChevronDown, ChevronRight } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { copyJson, copyText, safeJson } from "../../lib/clipboard";
@@ -346,6 +346,57 @@ export function MessageCard({
   );
 }
 
+function parseArgs(args: unknown): Record<string, unknown> | null {
+  if (typeof args === "string") {
+    try { return JSON.parse(args) as Record<string, unknown>; } catch { return null; }
+  }
+  if (args && typeof args === "object") return args as Record<string, unknown>;
+  return null;
+}
+
+function ToolCallCard({ name, args }: { name?: string; args?: unknown }) {
+  const parsed = parseArgs(args);
+  const entries = parsed ? Object.entries(parsed) : [];
+  return (
+    <div className="tool-call-card">
+      <div className="tool-call-header">
+        <Wrench size={14} />
+        <span className="tool-call-name">{name ?? "unknown"}</span>
+      </div>
+      {entries.length > 0 ? (
+        <div className="tool-call-args">
+          {entries.map(([key, value]) => (
+            <div key={key} className="tool-call-kv">
+              <span className="tool-call-key">{key}</span>
+              <span className="tool-call-value">{typeof value === "object" ? JSON.stringify(value) : String(value)}</span>
+            </div>
+          ))}
+        </div>
+      ) : parsed === null && args ? (
+        <pre className="tool-call-raw">{typeof args === "string" ? args : JSON.stringify(args)}</pre>
+      ) : null}
+    </div>
+  );
+}
+
+function ToolResultCard({ name, result }: { name?: string; result?: unknown }) {
+  const [expanded, setExpanded] = useState(false);
+  const text = typeof result === "string" ? result : safeJson(result);
+  const preview = text.length > 120 ? text.slice(0, 120) + "…" : text;
+  return (
+    <div className="tool-result-card">
+      <button className="tool-result-header" onClick={() => setExpanded((v) => !v)}>
+        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <span className="tool-result-label">{name ? `${name} result` : "Result"}</span>
+        {!expanded && <span className="tool-result-preview">{preview}</span>}
+      </button>
+      {expanded && (
+        <pre className="tool-result-body">{highlightJson(safeJson(result))}</pre>
+      )}
+    </div>
+  );
+}
+
 export function ContentBlock({
   content,
   textMode,
@@ -375,10 +426,10 @@ export function ContentBlock({
     );
   }
   if (content.type === "tool_call") {
-    return <JsonCode value={{ name: content.name, arguments: content.arguments }} />;
+    return <ToolCallCard name={content.name} args={content.arguments} />;
   }
   if (content.type === "tool_result") {
-    return <JsonCode value={{ name: content.name, result: content.result }} />;
+    return <ToolResultCard name={content.name} result={content.result} />;
   }
   return <JsonCode value={content} />;
 }

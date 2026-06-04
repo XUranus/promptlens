@@ -257,7 +257,7 @@ fn adapt_claude_code_event(value: &Value) -> AgentEventAdapterFields {
                     if let Some(rt) = result_text {
                         match &mut fields.text {
                             Some(existing) => {
-                                existing.push_str("\n");
+                                existing.push('\n');
                                 existing.push_str(&rt);
                             }
                             None => fields.text = Some(rt),

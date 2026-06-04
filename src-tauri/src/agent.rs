@@ -530,10 +530,10 @@ fn collect_agent_file_paths(value: &Value, key_hint: Option<&str>, paths: &mut V
         return;
     }
     match value {
-        Value::String(text) => {
-            if key_hint.is_some_and(is_file_path_key) && looks_like_file_path(text) {
-                paths.push(text.to_string());
-            }
+        Value::String(text)
+            if key_hint.is_some_and(is_file_path_key) && looks_like_file_path(text) =>
+        {
+            paths.push(text.to_string());
         }
         Value::Array(items) => {
             for item in items {
