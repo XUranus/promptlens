@@ -279,7 +279,6 @@ interface WorkspaceState {
   jumpToAgentEvent: (event: AgentEvent, file: FileScanResult | null) => Promise<void>;
   moveSelection: (delta: number, filtered: LogSummary[]) => void;
   initWorkspace: () => void;
-  startListeners: () => () => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -749,15 +748,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
       if (saved.activePath) set({ activeTabId: saved.activePath });
     })();
-  },
-
-  startListeners: () => {
-    const unlistenScan = listen<ProgressEvent>("scan-progress", (event) => set({ scanProgress: event.payload }));
-    const unlistenSearch = listen<ProgressEvent>("search-progress", (event) => set({ searchProgress: event.payload }));
-    return () => {
-      void unlistenScan.then((fn) => fn());
-      void unlistenSearch.then((fn) => fn());
-    };
   },
 }));
 
