@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { memo, useState, useEffect } from "react";
 import { X } from "lucide-react";
 import { formatBytes } from "../../lib/format";
 import type { FileScanResult, ProgressEvent } from "../../types";
@@ -63,7 +63,7 @@ export function ProgressStrip({
   );
 }
 
-export function WorkspaceTabs({
+export const WorkspaceTabs = memo(function WorkspaceTabs({
   sessionTabs,
   activeSessionTabId,
   onActivate,
@@ -135,9 +135,9 @@ export function WorkspaceTabs({
       )}
     </div>
   );
-}
+});
 
-export function StatusBar({
+export const StatusBar = memo(function StatusBar({
   loading,
   searching,
   scanProgress,
@@ -184,4 +184,4 @@ export function StatusBar({
       </div>
     </footer>
   );
-}
+});

@@ -48,7 +48,7 @@ import {
 } from "../analytics";
 import { leftTabLabel } from "../storage";
 
-export function LeftPanel({
+export const LeftPanel = memo(function LeftPanel({
   tab,
   setTab,
   source,
@@ -260,7 +260,7 @@ export function LeftPanel({
       </div>
     </div>
   );
-}
+});
 
 const FileHeader = memo(function FileHeader({ file, count }: { file: FileScanResult | null; count: number }) {
   if (!file) return <div className="file-header muted">No file loaded</div>;

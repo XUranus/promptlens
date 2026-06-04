@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { AlertCircle, Braces, ChevronDown, ChevronRight, Code, Copy, GitCompare, Wrench } from "lucide-react";
 import { copyJson, copyText, safeJson } from "../../lib/clipboard";
 import { formatBytes, formatJsonScalar, formatLatency } from "../../lib/format";
@@ -16,7 +16,7 @@ import {
   imageDataUrlFromString,
 } from "./CenterPanel";
 
-export function RightPanel({
+export const RightPanel = memo(function RightPanel({
   tab,
   setTab,
   detail,
@@ -59,7 +59,7 @@ export function RightPanel({
       {tab === "raw" ? <RawPayloadView detail={detail} agentEvent={agentEvent} /> : null}
     </div>
   );
-}
+});
 
 function DiffView({
   base,
