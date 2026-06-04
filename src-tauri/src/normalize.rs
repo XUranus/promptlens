@@ -3,6 +3,16 @@ use crate::parser::image_detector::normalize_image_string;
 use crate::types::*;
 use serde_json::Value;
 
+/// Extract the modification timestamp from file metadata as seconds since Unix epoch.
+/// Returns `None` if the modification time is unavailable or before the epoch.
+pub(crate) fn modified_timestamp(metadata: &std::fs::Metadata) -> Option<String> {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs().to_string())
+}
+
 pub(crate) fn summary_from_value(
     value: &Value,
     line_number: usize,
@@ -603,12 +613,21 @@ pub(crate) fn contains_image(value: &Value) -> bool {
         Value::Array(items) => items.iter().any(contains_image),
         Value::Object(map) => map.iter().any(|(key, child)| {
             let key = key.to_lowercase();
-            key.contains("image")
-                || key.contains("screenshot")
-                || key.contains("base64")
-                    && child.as_str().and_then(normalize_image_string).is_some()
+            ((key.contains("image") || key.contains("screenshot") || key.contains("base64"))
+                && child.as_str().and_then(normalize_image_string).is_some())
                 || contains_image(child)
         }),
+        _ => false,
+    }
+}
+
+/// Recursively check if any string value in a JSON tree contains `needle` (case-insensitive).
+/// This avoids serializing the entire JSON tree to a string just to search for a substring.
+pub(crate) fn value_string_contains(value: &Value, needle: &str) -> bool {
+    match value {
+        Value::String(s) => s.to_lowercase().contains(needle),
+        Value::Array(items) => items.iter().any(|v| value_string_contains(v, needle)),
+        Value::Object(map) => map.values().any(|v| value_string_contains(v, needle)),
         _ => false,
     }
 }

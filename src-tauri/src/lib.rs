@@ -20,7 +20,9 @@ mod tests {
     use super::*;
     use crate::agent_adapters::LogSource;
     use crate::cache::read_agent_session_cache;
-    use crate::normalize::{contains_image, normalize_call, summary_from_value};
+    use crate::normalize::{
+        contains_image, modified_timestamp, normalize_call, summary_from_value,
+    };
     use crate::scanner::{scan_jsonl_incremental, scan_jsonl_inner};
     use crate::search::search_jsonl_inner;
     use crate::types::*;
@@ -631,11 +633,7 @@ mod tests {
 
         let first = commands::read_agent_session(path.clone(), Some("codex".to_string())).unwrap();
         let metadata = fs::metadata(&path).unwrap();
-        let modified = metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|duration| duration.as_secs().to_string());
+        let modified = modified_timestamp(&metadata);
         let cached =
             read_agent_session_cache(&path, LogSource::Codex, metadata.len(), modified.as_deref())
                 .unwrap()

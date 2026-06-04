@@ -2,7 +2,7 @@ use crate::agent::agent_event_from_value;
 use crate::agent_adapters::LogSource;
 use crate::cache::{cache_db_path, read_agent_session_cache, write_agent_session_cache};
 use crate::export::export_records as export_records_impl;
-use crate::normalize::{normalize_call, summary_from_value};
+use crate::normalize::{modified_timestamp, normalize_call, summary_from_value};
 use crate::scanner::{scan_jsonl_incremental as scan_jsonl_incremental_impl, scan_jsonl_inner};
 use crate::search::search_jsonl_inner;
 use crate::types::*;
@@ -66,11 +66,7 @@ fn get_file_status(file_path: String) -> FileStatus {
         Ok(metadata) => FileStatus {
             exists: true,
             file_size: Some(metadata.len()),
-            modified: metadata
-                .modified()
-                .ok()
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|duration| duration.as_secs().to_string()),
+            modified: modified_timestamp(&metadata),
         },
         Err(_) => FileStatus {
             exists: false,
@@ -222,11 +218,7 @@ pub(crate) fn read_agent_session(
     let source = LogSource::from_option(log_source);
     let path = Path::new(&file_path);
     let metadata = fs::metadata(path).map_err(|err| format!("Failed to read metadata: {err}"))?;
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_secs().to_string());
+    let modified = modified_timestamp(&metadata);
     if let Ok(Some(cached)) =
         read_agent_session_cache(&file_path, source, metadata.len(), modified.as_deref())
     {
@@ -235,9 +227,46 @@ pub(crate) fn read_agent_session(
 
     let file = File::open(path).map_err(|err| format!("Failed to open file: {err}"))?;
     let mut reader = BufReader::new(file);
+    let (events, subagent_calls, sessions, ..) = read_agent_events(&mut reader, source, 0, 0)?;
+
+    let mut sessions = sessions.into_iter().collect::<Vec<_>>();
+    sessions.sort();
+
+    // Load subagent JSONL files from the session directory
+    let subagent_sessions = load_subagent_sessions(path, source, &subagent_calls);
+
+    let result = AgentSessionResult {
+        file_path,
+        source: source.as_str().to_string(),
+        total_events: events.len(),
+        sessions,
+        events,
+        subagent_sessions,
+    };
+    let _ = write_agent_session_cache(&result, metadata.len(), modified.as_deref());
+    Ok(result)
+}
+
+/// Read agent events from a BufReader, linking subagent_call -> tool_result as subagent_result.
+/// Returns (events, subagent_calls, sessions, final_line_number, final_byte_offset).
+fn read_agent_events(
+    reader: &mut BufReader<File>,
+    source: LogSource,
+    initial_line_number: usize,
+    initial_byte_offset: u64,
+) -> Result<
+    (
+        Vec<AgentEvent>,
+        HashMap<String, AgentEvent>,
+        HashSet<String>,
+        usize,
+        u64,
+    ),
+    String,
+> {
     let mut line = String::new();
-    let mut line_number = 0usize;
-    let mut byte_offset = 0u64;
+    let mut line_number = initial_line_number;
+    let mut byte_offset = initial_byte_offset;
     let mut events = Vec::new();
     let mut sessions = HashSet::new();
     let mut subagent_calls: HashMap<String, AgentEvent> = HashMap::new();
@@ -246,7 +275,7 @@ pub(crate) fn read_agent_session(
         line.clear();
         let bytes = reader
             .read_line(&mut line)
-            .map_err(|err| format!("Failed to read file: {err}"))?;
+            .map_err(|err| format!("Failed to read line: {err}"))?;
         if bytes == 0 {
             break;
         }
@@ -256,7 +285,6 @@ pub(crate) fn read_agent_session(
             byte_offset += bytes as u64;
             continue;
         }
-
         let value = match serde_json::from_str::<Value>(trimmed) {
             Ok(value) => value,
             Err(err) => json!({
@@ -294,22 +322,7 @@ pub(crate) fn read_agent_session(
         byte_offset += bytes as u64;
     }
 
-    let mut sessions = sessions.into_iter().collect::<Vec<_>>();
-    sessions.sort();
-
-    // Load subagent JSONL files from the session directory
-    let subagent_sessions = load_subagent_sessions(path, source, &subagent_calls);
-
-    let result = AgentSessionResult {
-        file_path,
-        source: source.as_str().to_string(),
-        total_events: events.len(),
-        sessions,
-        events,
-        subagent_sessions,
-    };
-    let _ = write_agent_session_cache(&result, metadata.len(), modified.as_deref());
-    Ok(result)
+    Ok((events, subagent_calls, sessions, line_number, byte_offset))
 }
 
 fn load_subagent_sessions(
@@ -479,65 +492,32 @@ fn read_agent_session_incremental(
     log_source: Option<String>,
 ) -> Result<AgentSessionIncrementalResult, String> {
     let source = LogSource::from_option(log_source);
-    let file = File::open(&file_path).map_err(|err| format!("Failed to open file: {err}"))?;
+    let path = Path::new(&file_path);
+    let metadata = fs::metadata(path).map_err(|err| format!("Failed to read metadata: {err}"))?;
+    let modified = modified_timestamp(&metadata);
+
+    let file = File::open(path).map_err(|err| format!("Failed to open file: {err}"))?;
     let mut reader = BufReader::new(file);
     reader
         .seek(SeekFrom::Start(from_offset))
         .map_err(|err| format!("Failed to seek offset: {err}"))?;
 
-    let mut line = String::new();
-    let mut byte_offset = from_offset;
-    let mut line_number = from_line_number;
-    let mut events = Vec::new();
-    let mut subagent_calls: HashMap<String, AgentEvent> = HashMap::new();
+    let (events, subagent_calls, mut sessions, line_number, _byte_offset) =
+        read_agent_events(&mut reader, source, from_line_number, from_offset)?;
 
-    loop {
-        line.clear();
-        let bytes = reader
-            .read_line(&mut line)
-            .map_err(|err| format!("Failed to read line: {err}"))?;
-        if bytes == 0 {
-            break;
-        }
-        line_number += 1;
-        let trimmed = line.trim_end_matches(['\n', '\r']);
-        if trimmed.trim().is_empty() {
-            byte_offset += bytes as u64;
-            continue;
-        }
-        let value = match serde_json::from_str::<Value>(trimmed) {
-            Ok(value) => value,
-            Err(err) => json!({
-                "parse_error": err.to_string(),
-                "raw": trimmed,
-            }),
-        };
-        let mut event = agent_event_from_value(value, line_number, byte_offset, source);
-        if event.event_type == "tool_result" {
-            if let Some(call) = event
-                .tool_use_id
-                .as_ref()
-                .and_then(|tool_use_id| subagent_calls.get(tool_use_id))
-            {
-                event.event_type = "subagent_result".to_string();
-                event.tool_name = event.tool_name.or_else(|| call.tool_name.clone());
-                event.subagent_type = event.subagent_type.or_else(|| call.subagent_type.clone());
-                event.subagent_description = event
-                    .subagent_description
-                    .or_else(|| call.subagent_description.clone());
-                event.subagent_prompt = event
-                    .subagent_prompt
-                    .or_else(|| call.subagent_prompt.clone());
-            }
-        }
-        if event.event_type == "subagent_call" {
-            if let Some(tool_use_id) = &event.tool_use_id {
-                subagent_calls.insert(tool_use_id.clone(), event.clone());
-            }
-        }
-        events.push(event);
-        byte_offset += bytes as u64;
-    }
+    // Cache the incremental result as a full session result
+    let mut sorted_sessions = sessions.drain().collect::<Vec<_>>();
+    sorted_sessions.sort();
+    let subagent_sessions = load_subagent_sessions(path, source, &subagent_calls);
+    let full_result = AgentSessionResult {
+        file_path: file_path.clone(),
+        source: source.as_str().to_string(),
+        total_events: events.len(),
+        sessions: sorted_sessions,
+        events: events.clone(),
+        subagent_sessions,
+    };
+    let _ = write_agent_session_cache(&full_result, metadata.len(), modified.as_deref());
 
     let total = events.len();
     Ok(AgentSessionIncrementalResult {
@@ -603,11 +583,7 @@ fn compute_analytics(file_path: String) -> Result<crate::analytics::ComputedAnal
     use crate::cache::read_scan_cache;
     let path = Path::new(&file_path);
     let metadata = fs::metadata(path).map_err(|err| format!("Failed to read metadata: {err}"))?;
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_secs().to_string());
+    let modified = modified_timestamp(&metadata);
     let cached = read_scan_cache(&file_path, metadata.len(), modified.as_deref())?
         .ok_or_else(|| "No cached scan results found. Please scan the file first.".to_string())?;
     Ok(crate::analytics::compute_all(&cached.summaries))

@@ -1,5 +1,5 @@
 use crate::cache::{append_scan_cache, read_scan_cache, write_scan_cache};
-use crate::normalize::{invalid_line_summary, summary_from_value};
+use crate::normalize::{invalid_line_summary, modified_timestamp, summary_from_value};
 use crate::search::{append_search_index_from_file, write_search_index_from_file};
 use crate::types::*;
 use serde_json::Value;
@@ -25,11 +25,7 @@ pub(crate) fn scan_jsonl_inner(
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "unknown.jsonl".to_string());
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_secs().to_string());
+    let modified = modified_timestamp(&metadata);
 
     if let Ok(Some(mut cached)) = read_scan_cache(&file_path, metadata.len(), modified.as_deref()) {
         cached.duration_ms = started.elapsed().as_millis();
@@ -172,11 +168,7 @@ pub(crate) fn scan_jsonl_incremental(
     let started = Instant::now();
     let metadata =
         fs::metadata(&file_path).map_err(|err| format!("Failed to read metadata: {err}"))?;
-    let modified = metadata
-        .modified()
-        .ok()
-        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_secs().to_string());
+    let modified = modified_timestamp(&metadata);
     if metadata.len() < from_offset {
         return Err("File appears to have been truncated. Run a full rescan.".to_string());
     }

@@ -2,7 +2,9 @@ use crate::adapters::{detect_provider, normalize_role};
 use crate::agent_adapters::{
     adapt_agent_event, file_event_type_from_tool, is_file_tool, is_shell_tool, LogSource,
 };
-use crate::normalize::{contains_key, find_first_key, find_preview, first_string, first_u64};
+use crate::normalize::{
+    contains_key, find_first_key, find_preview, first_string, first_u64, value_string_contains,
+};
 use crate::types::*;
 use serde_json::Value;
 
@@ -287,20 +289,39 @@ fn agent_provider(value: &Value) -> Option<String> {
     first_string(value, &["provider", "source", "agent", "app"])
         .map(|provider| provider.to_lowercase())
         .or_else(|| {
-            let raw = value.to_string().to_lowercase();
-            if raw.contains("claude_code") || raw.contains("claude-code") {
-                Some("claude_code".to_string())
-            } else if raw.contains("opencode") {
-                Some("opencode".to_string())
-            } else if raw.contains("openclaw") || raw.contains("opwnclaw") {
-                Some("openclaw".to_string())
-            } else if raw.contains("\"codex\"") || raw.contains("exec_command") {
-                Some("codex".to_string())
-            } else if value.get("sessionId").is_some() && value.get("message").is_some() {
-                Some("claude_code".to_string())
-            } else {
-                detect_provider(value)
+            // Check structural signals for Claude Code
+            if value.get("sessionId").is_some() && value.get("message").is_some() {
+                return Some("claude_code".to_string());
             }
+            // Check specific known fields rather than serializing the entire tree
+            if value_string_contains(value, "claude_code")
+                || value_string_contains(value, "claude-code")
+            {
+                return Some("claude_code".to_string());
+            }
+            if value_string_contains(value, "opencode") {
+                return Some("opencode".to_string());
+            }
+            if value_string_contains(value, "openclaw") || value_string_contains(value, "opwnclaw")
+            {
+                return Some("openclaw".to_string());
+            }
+            // Check tool name for exec_command, and any value for "codex"
+            let has_exec_command = value
+                .get("tool_use")
+                .and_then(|t| t.get("name"))
+                .and_then(Value::as_str)
+                .map(|s| s == "exec_command")
+                .unwrap_or(false)
+                || value
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(|s| s == "exec_command")
+                    .unwrap_or(false);
+            if has_exec_command || value_string_contains(value, "codex") {
+                return Some("codex".to_string());
+            }
+            detect_provider(value)
         })
 }
 
@@ -353,15 +374,25 @@ pub(crate) fn detect_source_from_value(value: &Value) -> Option<LogSource> {
         return Some(LogSource::ClaudeCode);
     }
 
-    // Raw string matching for other sources
-    let raw = value.to_string().to_lowercase();
-    if raw.contains("exec_command") || raw.contains("\"codex\"") {
+    // Targeted structural checks for other sources (avoids serializing entire JSON tree)
+    let has_exec_command = value
+        .get("tool_use")
+        .and_then(|t| t.get("name"))
+        .and_then(Value::as_str)
+        .map(|s| s == "exec_command")
+        .unwrap_or(false)
+        || value
+            .get("name")
+            .and_then(Value::as_str)
+            .map(|s| s == "exec_command")
+            .unwrap_or(false);
+    if has_exec_command || value_string_contains(value, "codex") {
         return Some(LogSource::Codex);
     }
-    if raw.contains("opencode") {
+    if value_string_contains(value, "opencode") {
         return Some(LogSource::OpenCode);
     }
-    if raw.contains("openclaw") || raw.contains("opwnclaw") {
+    if value_string_contains(value, "openclaw") || value_string_contains(value, "opwnclaw") {
         return Some(LogSource::OpenClaw);
     }
 
