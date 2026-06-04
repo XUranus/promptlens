@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type {
   AgentEvent,
   CacheInfo,
-  ComputedAnalytics,
+  ComputedAnalyticsRaw,
   CostEstimate,
   FileScanResult,
   FileStatus,
@@ -244,7 +244,7 @@ interface WorkspaceState {
   fileStatus: FileStatus | null;
   pricingTable: ModelPricing[];
   costEstimates: CostEstimate[];
-  rustAnalytics: ComputedAnalytics | null;
+  rustAnalytics: ComputedAnalyticsRaw | null;
 
   // Actions
   setActiveTabId: (id: string | null) => void;
@@ -260,7 +260,7 @@ interface WorkspaceState {
   setSearchProgress: (v: ProgressEvent | null) => void;
   setFileStatus: (v: FileStatus | null) => void;
   setCostEstimates: (v: CostEstimate[]) => void;
-  setRustAnalytics: (v: ComputedAnalytics | null) => void;
+  setRustAnalytics: (v: ComputedAnalyticsRaw | null) => void;
   loadFile: (path: string, options?: { quiet?: boolean; source?: LogSource }) => Promise<void>;
   handleSelect: (summary: LogSummary) => Promise<void>;
   handleSetCompare: (summary: LogSummary) => Promise<void>;

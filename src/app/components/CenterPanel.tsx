@@ -257,8 +257,12 @@ function AgentOutputBlock({ title, text }: { title: string; text: string }) {
   );
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function ToolResultContentView({ event, fallback }: { event: AgentEvent; fallback: unknown }) {
-  const trc = event.toolResultContent as Record<string, unknown> | undefined;
+  const trc = isPlainObject(event.toolResultContent) ? event.toolResultContent : undefined;
   if (!trc) {
     return typeof fallback === "string" ? <pre className="plain-text-block">{fallback}</pre> : <JsonCode value={fallback ?? event.raw} />;
   }
