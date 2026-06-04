@@ -27,6 +27,7 @@ import {
 
 export function App() {
   const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const resizeHandlersRef = useRef<Map<string, (e: MouseEvent) => void>>(new Map());
 
   // App store selectors (all primitive/stable references - no infinite loop)
   const theme = useAppStore((s) => s.theme);
@@ -346,19 +347,27 @@ export function App() {
 
     const leftHandle = document.getElementById("resize-handle-left");
     const rightHandle = document.getElementById("resize-handle-right");
+    const handlers = resizeHandlersRef.current;
     if (leftHandle) {
       const handler = (e: MouseEvent) => onHandleDown(e, "left");
       leftHandle.addEventListener("mousedown", handler);
-      (leftHandle as any)._rh = handler;
+      handlers.set("left", handler);
     }
     if (rightHandle) {
       const handler = (e: MouseEvent) => onHandleDown(e, "right");
       rightHandle.addEventListener("mousedown", handler);
-      (rightHandle as any)._rh = handler;
+      handlers.set("right", handler);
     }
     return () => {
-      if (leftHandle) leftHandle.removeEventListener("mousedown", (leftHandle as any)._rh);
-      if (rightHandle) rightHandle.removeEventListener("mousedown", (rightHandle as any)._rh);
+      if (leftHandle) {
+        const h = handlers.get("left");
+        if (h) leftHandle.removeEventListener("mousedown", h);
+      }
+      if (rightHandle) {
+        const h = handlers.get("right");
+        if (h) rightHandle.removeEventListener("mousedown", h);
+      }
+      handlers.clear();
     };
   }, [leftPanelWidth, rightPanelWidth]);
 

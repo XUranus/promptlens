@@ -3,7 +3,7 @@ import type {
   AgentSessionIncrementalResult,
   AgentSessionResult,
   CacheInfo,
-  ComputedAnalytics,
+  ComputedAnalyticsRaw,
   CostEstimate,
   FileScanResult,
   FileStatus,
@@ -114,6 +114,6 @@ export async function stopFileWatch(): Promise<void> {
   return invoke("stop_file_watch");
 }
 
-export async function computeAnalytics(filePath: string): Promise<ComputedAnalytics> {
+export async function computeAnalytics(filePath: string): Promise<ComputedAnalyticsRaw> {
   return invoke("compute_analytics", { filePath });
 }

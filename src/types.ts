@@ -221,7 +221,7 @@ export type CostEstimate = {
   matched_pricing: string | null;
 };
 
-export type AnalyticsSummary = {
+export type AnalyticsSummaryRaw = {
   total: number;
   success: number;
   errors: number;
@@ -231,16 +231,16 @@ export type AnalyticsSummary = {
   p99Latency?: number;
   totalTokens: number;
   p95Tokens?: number;
-  topModels: NameCount[];
-  topProviders: NameCount[];
+  topModels: NameCountRaw[];
+  topProviders: NameCountRaw[];
 };
 
-export type NameCount = {
+export type NameCountRaw = {
   name: string;
   count: number;
 };
 
-export type IssueRecord = {
+export type IssueRecordRaw = {
   lineNumber: number;
   byteOffset: number;
   kind: string;
@@ -249,7 +249,7 @@ export type IssueRecord = {
   model?: string;
 };
 
-export type SessionGroup = {
+export type SessionGroupRaw = {
   id: string;
   label: string;
   startLine: number;
@@ -265,17 +265,17 @@ export type SessionGroup = {
   avgLatencyMs?: number;
 };
 
-export type FilterOptions = {
+export type FilterOptionsRaw = {
   providers: string[];
   models: string[];
   traces: string[];
 };
 
-export type ComputedAnalytics = {
-  analytics: AnalyticsSummary;
-  issues: IssueRecord[];
-  sessions: SessionGroup[];
-  filterOptions: FilterOptions;
+export type ComputedAnalyticsRaw = {
+  analytics: AnalyticsSummaryRaw;
+  issues: IssueRecordRaw[];
+  sessions: SessionGroupRaw[];
+  filterOptions: FilterOptionsRaw;
 };
 
 export type ScanChunkPayload = {
