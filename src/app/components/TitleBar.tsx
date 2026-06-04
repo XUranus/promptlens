@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Database, FileDown, FileText, FolderOpen, Moon, RotateCw, Sun } from "lucide-react";
 import { basename } from "../../lib/format";
@@ -8,7 +8,7 @@ import { DEFAULT_SETTINGS, LOG_SOURCE_OPTIONS, sourceBrandLabel } from "../types
 
 const appWindow = getCurrentWindow();
 
-export function TitleBar({
+export const TitleBar = memo(function TitleBar({
   source,
   theme,
   settings,
@@ -197,7 +197,7 @@ export function TitleBar({
       {openMenu === "settings" ? <SettingsMenu settings={settings} systemFonts={systemFonts} onChange={onChangeSettings} /> : null}
     </div>
   );
-}
+});
 
 function OpenMenu({
   loading,

@@ -1,4 +1,4 @@
-import type { JSX } from "react";
+import { memo, type JSX } from "react";
 import { CheckCircle, XCircle, AlertTriangle, HelpCircle, Copy } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -8,7 +8,7 @@ import type { AgentEvent, NormalizedContent, NormalizedMessage, RecordDetail } f
 import type { MessageViewMode } from "../types";
 import { agentEventLabel, agentEventTypeLabel, rawValueByKeys as rawValByKeys, rawTextByKeys as rawTxtByKeys } from "../analytics";
 
-export function DetailView({
+export const DetailView = memo(function DetailView({
   detail,
   selected,
   agentEvent,
@@ -82,7 +82,7 @@ export function DetailView({
       )}
     </div>
   );
-}
+});
 
 function RawRecordFallback({ detail }: { detail: RecordDetail }) {
   const request = detail.normalized?.request?.raw ?? detail.normalized?.request?.messages ?? rawValByKeys(detail.raw, ["request", "input", "prompt", "messages"]);
