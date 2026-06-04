@@ -52,6 +52,12 @@
   /* Code */
   --code-bg: rgba(8, 10, 15, 0.60);
 
+  /* JSON syntax highlighting */
+  --json-key: #7cc4f7;
+  --json-string: #9bd88f;
+  --json-number: #f8c77e;
+  --json-boolean: #c69cff;
+
   /* Blur presets */
   --blur-sm: blur(12px);
   --blur-md: blur(20px);
@@ -111,4 +117,10 @@
   --warning-border: rgba(217, 119, 6, 0.20);
 
   --code-bg: rgba(0, 0, 0, 0.04);
+
+  /* JSON syntax highlighting */
+  --json-key: #176b9e;
+  --json-string: #2e7d32;
+  --json-number: #b5651d;
+  --json-boolean: #7b1fa2;
 }

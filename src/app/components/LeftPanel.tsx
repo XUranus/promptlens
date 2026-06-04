@@ -138,38 +138,38 @@ export const LeftPanel = memo(function LeftPanel({
     <div className="left-panel">
       <FileHeader file={file} count={records.length} />
       <div className="left-tabs" role="tablist">
-        <button role="tab" aria-selected={tab === "records"} className={tab === "records" ? "active" : ""} onClick={() => setTab("records")} title="Records">
+        <button role="tab" aria-selected={tab === "records"} className={"tab-button-base" + (tab === "records" ? " active" : "")} onClick={() => setTab("records")} title="Records">
           <FileText size={14} />
         </button>
         {isAgentSession && (
-          <button role="tab" aria-selected={tab === "timeline"} className={tab === "timeline" ? "active" : ""} onClick={() => setTab("timeline")} title="Agent Timeline">
+          <button role="tab" aria-selected={tab === "timeline"} className={"tab-button-base" + (tab === "timeline" ? " active" : "")} onClick={() => setTab("timeline")} title="Agent Timeline">
             <Terminal size={14} />
           </button>
         )}
         {isAgentSession && (
-          <button role="tab" aria-selected={tab === "subagents"} className={tab === "subagents" ? "active" : ""} onClick={() => setTab("subagents")} title="Subagents">
+          <button role="tab" aria-selected={tab === "subagents"} className={"tab-button-base" + (tab === "subagents" ? " active" : "")} onClick={() => setTab("subagents")} title="Subagents">
             <Bot size={14} />
           </button>
         )}
         {isAgentSession && (
-          <button role="tab" aria-selected={tab === "agentFiles"} className={tab === "agentFiles" ? "active" : ""} onClick={() => setTab("agentFiles")} title="Agent Files">
+          <button role="tab" aria-selected={tab === "agentFiles"} className={"tab-button-base" + (tab === "agentFiles" ? " active" : "")} onClick={() => setTab("agentFiles")} title="Agent Files">
             <FileText size={14} />
           </button>
         )}
         {!isAgentSession && (
-          <button role="tab" aria-selected={tab === "trace"} className={tab === "trace" ? "active" : ""} onClick={() => setTab("trace")} title="Trace">
+          <button role="tab" aria-selected={tab === "trace"} className={"tab-button-base" + (tab === "trace" ? " active" : "")} onClick={() => setTab("trace")} title="Trace">
             <Network size={14} />
           </button>
         )}
         {!isAgentSession && (
-          <button role="tab" aria-selected={tab === "sessions"} className={tab === "sessions" ? "active" : ""} onClick={() => setTab("sessions")} title="Sessions">
+          <button role="tab" aria-selected={tab === "sessions"} className={"tab-button-base" + (tab === "sessions" ? " active" : "")} onClick={() => setTab("sessions")} title="Sessions">
             <Users size={14} />
           </button>
         )}
-        <button role="tab" aria-selected={tab === "analytics"} className={tab === "analytics" ? "active" : ""} onClick={() => setTab("analytics")} title="Analytics">
+        <button role="tab" aria-selected={tab === "analytics"} className={"tab-button-base" + (tab === "analytics" ? " active" : "")} onClick={() => setTab("analytics")} title="Analytics">
           <BarChart3 size={14} />
         </button>
-        <button role="tab" aria-selected={tab === "issues"} className={tab === "issues" ? "active" : ""} onClick={() => setTab("issues")} title="Issues">
+        <button role="tab" aria-selected={tab === "issues"} className={"tab-button-base" + (tab === "issues" ? " active" : "")} onClick={() => setTab("issues")} title="Issues">
           <AlertTriangle size={14} />
         </button>
       </div>

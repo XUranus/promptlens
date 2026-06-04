@@ -36,19 +36,19 @@ export const RightPanel = memo(function RightPanel({
   return (
     <div className="right-panel">
       <div className="tabs">
-        <button className={tab === "diff" ? "active" : ""} onClick={() => setTab("diff")} title="Diff">
+        <button className={"tab-button-base" + (tab === "diff" ? " active" : "")} onClick={() => setTab("diff")} title="Diff">
           <GitCompare size={14} />
         </button>
-        <button className={tab === "tools" ? "active" : ""} onClick={() => setTab("tools")} title="Tools">
+        <button className={"tab-button-base" + (tab === "tools" ? " active" : "")} onClick={() => setTab("tools")} title="Tools">
           <Wrench size={14} />
         </button>
-        <button className={tab === "error" ? "active" : ""} onClick={() => setTab("error")} title="Error">
+        <button className={"tab-button-base" + (tab === "error" ? " active" : "")} onClick={() => setTab("error")} title="Error">
           <AlertCircle size={14} />
         </button>
-        <button className={tab === "json" ? "active" : ""} onClick={() => setTab("json")} title="JSON">
+        <button className={"tab-button-base" + (tab === "json" ? " active" : "")} onClick={() => setTab("json")} title="JSON">
           <Braces size={14} />
         </button>
-        <button className={tab === "raw" ? "active" : ""} onClick={() => setTab("raw")} title="Raw">
+        <button className={"tab-button-base" + (tab === "raw" ? " active" : "")} onClick={() => setTab("raw")} title="Raw">
           <Code size={14} />
         </button>
       </div>

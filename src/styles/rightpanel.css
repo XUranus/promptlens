@@ -23,29 +23,9 @@
 
 .tabs button {
   flex: 1 1 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   height: 36px;
-  border: 0;
-  border-right: 1px solid var(--glass-border);
-  color: var(--text-tertiary);
-  background: transparent;
-  cursor: pointer;
   font-size: 11px;
   font-weight: 500;
-  transition: all 150ms var(--ease);
-}
-
-.tabs button:hover {
-  color: var(--text-secondary);
-  background: var(--glass-bg-hover);
-}
-
-.tabs button.active {
-  color: var(--accent);
-  background: var(--accent-bg);
-  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 /* ============================================================
@@ -153,11 +133,7 @@
 }
 
 .json-key {
-  color: #7cc4f7;
-}
-
-:root[data-theme="light"] .json-key {
-  color: #176b9e;
+  color: var(--json-key);
 }
 
 .json-count,
