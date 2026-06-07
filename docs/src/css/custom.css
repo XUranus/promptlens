@@ -1,0 +1,153 @@
+:root {
+  --ifm-color-primary: #5b9cf6;
+  --ifm-color-primary-dark: #4a8de8;
+  --ifm-color-primary-darker: #3d82e0;
+  --ifm-color-primary-darkest: #2a6bc4;
+  --ifm-color-primary-light: #6dabf8;
+  --ifm-color-primary-lighter: #7ab5f9;
+  --ifm-color-primary-lightest: #9dc8fb;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+  --pl-bg: #0a0c10;
+  --pl-surface: rgba(255, 255, 255, 0.04);
+  --pl-border: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #5b9cf6;
+  --ifm-color-primary-dark: #4a8de8;
+  --ifm-color-primary-darker: #3d82e0;
+  --ifm-color-primary-darkest: #2a6bc4;
+  --ifm-color-primary-light: #6dabf8;
+  --ifm-color-primary-lighter: #7ab5f9;
+  --ifm-color-primary-lightest: #9dc8fb;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+  --ifm-background-color: #0d1117;
+  --ifm-navbar-background-color: rgba(13, 17, 23, 0.85);
+  --ifm-footer-background-color: #0a0c10;
+}
+
+[data-theme='light'] {
+  --ifm-color-primary: #3478f6;
+  --ifm-color-primary-dark: #2568e0;
+  --ifm-color-primary-darker: #1f5fcf;
+  --ifm-color-primary-darkest: #1a4fad;
+  --ifm-color-primary-light: #4d88f8;
+  --ifm-color-primary-lighter: #5e94f9;
+  --ifm-color-primary-lightest: #8db5fb;
+}
+
+/* Smooth transitions */
+.navbar, .footer {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* Mermaid diagrams */
+.mermaid {
+  text-align: center;
+  margin: 1.5rem 0;
+}
+
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Interactive animation containers */
+.demo-container {
+  border: 1px solid var(--pl-border);
+  border-radius: 12px;
+  padding: 2rem;
+  margin: 1.5rem 0;
+  background: var(--pl-surface);
+  backdrop-filter: blur(8px);
+}
+
+/* Info cards */
+.info-card {
+  border: 1px solid var(--pl-border);
+  border-radius: 10px;
+  padding: 1.2rem;
+  margin: 0.8rem 0;
+  background: var(--pl-surface);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.info-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(91, 156, 246, 0.15);
+}
+
+/* Flow diagrams */
+.flow-step {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  background: var(--ifm-color-primary);
+  color: white;
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin: 0.25rem;
+}
+
+.flow-arrow {
+  display: inline-block;
+  padding: 0 0.5rem;
+  color: var(--ifm-color-primary);
+  font-size: 1.5rem;
+  vertical-align: middle;
+}
+
+/* Tables */
+table {
+  width: 100%;
+}
+
+table th {
+  background: var(--pl-surface);
+}
+
+/* Code blocks */
+.prism-code {
+  border-radius: 8px !important;
+}
+
+/* Animated gradient hero */
+.hero--gradient {
+  background: linear-gradient(135deg, #0a0c10 0%, #1a1e2e 50%, #0a0c10 100%);
+  background-size: 200% 200%;
+  animation: gradientShift 8s ease infinite;
+}
+
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Pulse animation for live elements */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+/* Event type badges */
+.event-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: var(--ifm-font-family-monospace);
+}
+
+.event-badge.user { background: rgba(52, 211, 153, 0.15); color: #34d399; }
+.event-badge.assistant { background: rgba(91, 156, 246, 0.15); color: #5b9cf6; }
+.event-badge.tool { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+.event-badge.error { background: rgba(248, 113, 113, 0.15); color: #f87171; }
+.event-badge.system { background: rgba(148, 163, 184, 0.15); color: #94a3b8; }
